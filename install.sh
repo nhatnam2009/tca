@@ -109,7 +109,7 @@ if in_termux; then
   #   termux-api  wake lock + thông báo khi agent xong việc
   #   jq       nhiều lệnh agent hay dùng cần nó
   REQUIRED=(nodejs git)
-  EXTRAS=(ripgrep fd termux-api jq termux-services)
+  EXTRAS=(ripgrep termux-api jq termux-services)
 
   # Tên gói Termux có đổi theo thời gian. Gói nào không tồn tại thì bỏ qua kèm
   # cảnh báo, chứ không làm sập cả lần cài.

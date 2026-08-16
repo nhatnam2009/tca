@@ -352,24 +352,40 @@ test("copyRishFiles finds the export, copies both files, and says why when it ca
   const original = process.env.HOME;
   process.env.HOME = home;
   try {
-    const { copyRishFiles, rishFilesPresent, rishReady } = await import(
+    const { copyRishFiles, rishFilesPresent, rishReady, downloadDirs } = await import(
       `../src/privilege.js?rish=${Date.now()}`
     );
 
+    // The search list has to be passed in. Redirecting HOME is not enough to
+    // isolate this on the device the project is actually for: the default list ends
+    // with the absolute /sdcard/Download, which exists on any real phone, so the
+    // "nothing anywhere" case below silently became "the files are not there" and
+    // this test could only pass on a desktop.
+    assert.ok(
+      downloadDirs().some((d) => path.isAbsolute(d) && !d.startsWith(home)),
+      "the default list is expected to contain a system path, which is why dirs is injectable",
+    );
+    const dl = path.join(home, "storage", "shared", "Download");
+    const dirs = [dl];
+
     // Nothing anywhere: the message has to distinguish "no Download directory"
     // (storage permission was refused) from "the files are not there".
-    const none = copyRishFiles();
+    const none = copyRishFiles({ dirs });
     assert.equal(none.ok, false);
     assert.equal(none.errKey, "priv.shizuku.storageFirst");
     assert.equal(rishReady(), false);
 
-    // Shizuku exports into Download.
-    const dl = path.join(home, "storage", "shared", "Download");
+    // The directory exists but is empty: a different problem, a different message.
     fs.mkdirSync(dl, { recursive: true });
+    const empty = copyRishFiles({ dirs });
+    assert.equal(empty.ok, false);
+    assert.equal(empty.errKey, "priv.err.rish_missing");
+
+    // Shizuku exports into Download.
     fs.writeFileSync(path.join(dl, "rish"), "#!/system/bin/sh\necho hi\n");
     fs.writeFileSync(path.join(dl, "rish_shizuku.dex"), "dex");
 
-    const copied = copyRishFiles();
+    const copied = copyRishFiles({ dirs });
     assert.equal(copied.ok, true, JSON.stringify(copied));
     assert.deepEqual(copied.copied.slice().sort(), ["rish", "rish_shizuku.dex"]);
     assert.equal(copied.from, dl);
@@ -381,7 +397,7 @@ test("copyRishFiles finds the export, copies both files, and says why when it ca
     fs.rmSync(path.join(home, "rish"));
     fs.rmSync(path.join(home, "rish_shizuku.dex"));
     fs.rmSync(path.join(dl, "rish_shizuku.dex"));
-    const partial = copyRishFiles();
+    const partial = copyRishFiles({ dirs });
     assert.equal(partial.ok, false);
     assert.equal(rishReady(), false, "rish alone is not enough, it needs the dex");
   } finally {

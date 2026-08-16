@@ -208,8 +208,15 @@ export function rishFilesPresent() {
   return { script: fs.existsSync(script), dex: fs.existsSync(dex) };
 }
 
-/** Where Android puts a file the Shizuku app exported. */
-function downloadDirs() {
+/**
+ * Where Android puts a file the Shizuku app exported.
+ *
+ * Exported so a test can see the list rather than guess it. The last entry is an
+ * absolute system path, which is why `copyRishFiles` takes an override: redirecting
+ * HOME is not enough to isolate this function on a real phone, where /sdcard
+ * exists and the search therefore succeeds in finding a directory.
+ */
+export function downloadDirs() {
   const home = process.env.HOME || os.homedir();
   return [
     path.join(home, "storage", "shared", "Download"),
@@ -226,13 +233,15 @@ function downloadDirs() {
  * A glob in a shell string is exactly the kind of thing that quietly does the
  * wrong thing when a path contains a space, and there is no reason to spawn a
  * process to copy two files.
+ * @param {{dirs?: string[]}} [opts] override the search list; only tests need this
  * @returns {{ok: boolean, errKey?: string, from?: string, copied: string[]}}
  */
-export function copyRishFiles() {
+export function copyRishFiles(opts = {}) {
   const { home, script, dex } = rishPaths();
   const wanted = ["rish", "rish_shizuku.dex"];
+  const dirs = opts.dirs || downloadDirs();
 
-  for (const dir of downloadDirs()) {
+  for (const dir of dirs) {
     if (!fs.existsSync(dir)) continue;
     if (!fs.existsSync(path.join(dir, "rish"))) continue;
     const copied = [];
@@ -255,7 +264,7 @@ export function copyRishFiles() {
   }
 
   // No Download directory at all usually means storage permission was refused.
-  const anyDir = downloadDirs().some((d) => fs.existsSync(d));
+  const anyDir = dirs.some((d) => fs.existsSync(d));
   return {
     ok: false,
     copied: [],

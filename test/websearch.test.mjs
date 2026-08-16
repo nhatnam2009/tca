@@ -246,7 +246,7 @@ test("the boot script is written, is executable, and points at this checkout", a
   }
 });
 
-test("start-on-boot is a listed capability, and the route refuses off Termux", async (t) => {
+test("start-on-boot is a listed capability, and the route is Termux-only", async (t) => {
   const { CAPABILITIES } = await import("../src/capabilities.js");
   const boot = CAPABILITIES.find((c) => c.id === "boot");
   assert.ok(boot, "the catalogue should list it");
@@ -258,10 +258,28 @@ test("start-on-boot is a listed capability, and the route refuses off Termux", a
   const { server, port, token } = await serve({ port: 0, quiet: true });
   t.after(() => server.close());
 
-  const res = await fetch(`http://127.0.0.1:${port}/api/privilege/boot-script`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: "{}",
-  });
-  assert.equal(res.status, 400, "there is no Termux:Boot on a dev machine");
+  const call = (body) =>
+    fetch(`http://127.0.0.1:${port}/api/privilege/boot-script`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  // Asserted against the environment rather than against a fixed 400. Hardcoding
+  // "there is no Termux:Boot on a dev machine" made this test fail on the one
+  // platform the project is for, which is the wrong way round: a suite that cannot
+  // be green on the target device stops being a signal there.
+  if (process.env.TERMUX_VERSION) {
+    const res = await call({});
+    assert.equal(res.status, 200, "on Termux the script is installable");
+    const body = await res.json();
+    assert.ok(body.path, "it should say where it wrote the script");
+
+    // Undo it, so running the suite does not leave a boot hook behind on the phone.
+    const removed = await call({ remove: true });
+    assert.equal(removed.status, 200);
+  } else {
+    const res = await call({});
+    assert.equal(res.status, 400, "off Termux there is no Termux:Boot to install into");
+  }
 });

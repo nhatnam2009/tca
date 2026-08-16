@@ -66,10 +66,6 @@ export const DICT = {
       "Không có ripgrep, tool grep phải tự đọc từng file bằng JavaScript. Repo vài nghìn file trên điện thoại sẽ mất vài giây mỗi lần tìm.",
     "cap.fast_search.fix": "Chạy: pkg install ripgrep",
 
-    "cap.fast_glob.title": "Liệt kê file nhanh hơn",
-    "cap.fast_glob.why": "fd làm tool glob nhanh hơn và bỏ qua .gitignore đúng cách.",
-    "cap.fast_glob.fix": "Chạy: pkg install fd",
-
     "cap.notifications.title": "Thông báo khi agent xong việc",
     "cap.notifications.why":
       "Trên điện thoại bạn chuyển app liên tục. Không có cái này thì bạn không biết agent đã xong hay đang chờ bạn duyệt lệnh.",
@@ -491,10 +487,6 @@ export const DICT = {
     "cap.fast_search.why":
       "Without ripgrep the grep tool walks every file in JavaScript. On a few thousand files that is seconds per search on a phone.",
     "cap.fast_search.fix": "Run: pkg install ripgrep",
-
-    "cap.fast_glob.title": "Faster file listing",
-    "cap.fast_glob.why": "fd makes the glob tool faster and honours .gitignore properly.",
-    "cap.fast_glob.fix": "Run: pkg install fd",
 
     "cap.notifications.title": "Notify me when the agent is done",
     "cap.notifications.why":

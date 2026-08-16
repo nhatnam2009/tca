@@ -12,7 +12,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { run as execRun, pickShell } from "./exec.js";
-import { fdGlob, rgSearch } from "./fastsearch.js";
+import { rgGlob, rgSearch } from "./fastsearch.js";
 import { writeTodos } from "./store.js";
 import { search as webSearch } from "./websearch.js";
 import { diagnose, formatDiagnoses } from "./diagnostics.js";
@@ -26,7 +26,14 @@ const DEFAULT_TIMEOUT = 120_000;
 // list rather than two different prefixes of it.
 const MAX_GREP_LINES = 5_000;
 const GLOB_LIMIT = 20_000;
-const IGNORE_DIRS = new Set([
+/**
+ * Directories neither search path ever descends into.
+ *
+ * Exported so the parity tests can pass the real list rather than a copy of it: a
+ * copy that drifts would make the tests agree with each other while disagreeing
+ * with the tool, which is worse than having no test.
+ */
+export const IGNORE_DIRS = new Set([
   ".git",
   "node_modules",
   ".cache",
@@ -492,7 +499,7 @@ export const TOOLS = {
       // fd when the device has it, the JavaScript walk when it does not. Both
       // must produce the same file set; only the speed differs.
       let rels = null;
-      const fast = await fdGlob({
+      const fast = await rgGlob({
         root,
         pattern,
         limit: GLOB_LIMIT,

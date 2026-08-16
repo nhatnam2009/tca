@@ -694,7 +694,7 @@ test("the foundation group is a health line, not a row of install buttons", () =
 test("a broken foundation offers one repair, not one button per package", () => {
   const payload = powerPayload({ termux: true });
   const core = payload.groups.find((g) => g.tier === "core");
-  for (const id of ["fast_search", "fast_glob", "jq"]) {
+  for (const id of ["fast_search", "git", "jq"]) {
     core.items.push({
       id,
       tier: "core",
@@ -723,7 +723,7 @@ test("a broken foundation offers one repair, not one button per package", () => 
   assert.equal(buttons.length, 1, "three gaps, one button");
   assert.match(textOf(buttons[0]), /3/, "the button says how many it will fix");
   // All three names still have to be visible, so it is clear what is being repaired.
-  for (const id of ["fast_search", "fast_glob", "jq"]) {
+  for (const id of ["fast_search", "git", "jq"]) {
     assert.ok(textOf(group).includes(`title-${id}`), `${id} should be named`);
   }
 });

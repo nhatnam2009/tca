@@ -280,14 +280,24 @@ through a long job. The UI renders it as one card that updates in place.
 project's own checker on demand; writes already do it automatically, see
 [Verification](#verification).
 
-`grep` and `glob` use ripgrep and fd when the device has them, and the JavaScript
-walk when it does not. The two paths must return identical answers, or the agent's
-behaviour would depend on which packages are installed, so `src/fastsearch.js`
-overrides the defaults that disagree with ours (ripgrep reads `.gitignore` and
-skips dotfiles; our walk does neither) and routes any pattern using lookaround or
-backreferences - which the Rust regex crate cannot express - to JavaScript
-instead. `TCA_NO_FASTSEARCH=1` forces the slow path, which is how the parity test
-compares them.
+`grep` and `glob` both go through ripgrep when the device has it, and the
+JavaScript walk when it does not. The two paths must return identical answers, or
+the agent's behaviour would depend on which packages are installed, so
+`src/fastsearch.js` overrides the defaults that disagree with ours (ripgrep reads
+`.gitignore` and skips dotfiles; our walk does neither), gives a slash-free glob
+`--max-depth 1` because gitignore semantics would otherwise match it at any depth
+while minimatch keeps it in the current directory, and routes any pattern using
+lookaround or backreferences - which the Rust regex crate cannot express - to
+JavaScript instead. `TCA_NO_FASTSEARCH=1` forces the slow path, which is how the
+parity test compares them.
+
+Glob used to go through `fd`, and it disagreed with the walk in three independent
+ways at once - ripgrep's exclusion flags passed to a tool where `--glob` is a
+boolean switch, `--full-path` matching a `./`-prefixed platform-separated path, and
+a basename match that recursed when it should not. Every one of them surfaced as
+"no files match", which is the worst symptom available: indistinguishable from a
+real empty result, so nothing fell back and the agent was told the file it was
+looking for did not exist. `fd` is no longer used or installed.
 
 If the workspace contains an `AGENTS.md`, it is read on every turn and appended to
 the system prompt. That is the cheapest way to teach the agent "this project uses
@@ -413,7 +423,7 @@ src/compact.js       token estimation, safe cut points, history repair, summaris
 src/exec.js          the only place that spawns a process; shell and argv forms
 src/diagnostics.js   run the project's own checker on what was just written
 src/tools.js         17 tools + workspace confinement + denylist + diff engine
-src/fastsearch.js    ripgrep/fd fast path, kept answer-for-answer with the walk
+src/fastsearch.js    ripgrep fast path for grep and glob, answer-for-answer with the walk
 src/notify.js        termux-notification, so a blocked turn is not invisible
 src/websearch.js     DuckDuckGo HTML search, selectors in one editable table
 src/privilege.js     root / Shizuku / adb backends, and the Android unlocks
@@ -430,7 +440,7 @@ test/agent.test.mjs        end-to-end against a fake provider
 test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity
 test/context.test.mjs      pairing, repair, compaction, the store and checkpoints
 test/markdown.test.mjs     the UI renderer, highlighter and Power panel, in a DOM stub
-test/search.test.mjs       ripgrep/fd parity, the plan tool, AGENTS.md
+test/search.test.mjs       ripgrep parity for grep and glob, the plan tool, AGENTS.md
 test/verify.test.mjs       diagnostics, and the tool set each mode and agent gets
 test/websearch.test.mjs    the search parser against a saved page, boot script
 test/wire.test.mjs         what actually goes on the socket, for both formats

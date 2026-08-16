@@ -61,7 +61,6 @@ export const CAPABILITIES = [
   { id: "shell", tier: "core", weight: 2, packages: ["bash"], sizeMb: 2 },
   { id: "git", tier: "core", weight: 3, bin: "git", packages: ["git"], sizeMb: 12 },
   { id: "fast_search", tier: "core", weight: 3, bin: "rg", packages: ["ripgrep"], sizeMb: 4 },
-  { id: "fast_glob", tier: "core", weight: 2, bin: "fd", packages: ["fd"], sizeMb: 3 },
   { id: "jq", tier: "core", weight: 1, bin: "jq", packages: ["jq"], sizeMb: 1 },
   { id: "ssh", tier: "core", weight: 1, bin: "sshd", packages: ["openssh"], sizeMb: 10 },
   {

@@ -1,7 +1,7 @@
 /**
  * The native search fast path, the plan tool, and AGENTS.md.
  *
- * The important test here is parity. grep and glob run through ripgrep and fd
+ * The important test here is parity. grep and glob both run through ripgrep
  * when the device has them, so the agent's behaviour must not depend on which
  * packages happen to be installed - the same search has to return the same
  * answer either way. TCA_NO_FASTSEARCH exists so this can be checked by running
@@ -20,8 +20,8 @@ fs.mkdirSync(WORKSPACE, { recursive: true });
 process.env.TCA_HOME = path.join(TMP, "state");
 process.env.TCA_CONFIG = path.join(TMP, "config.json");
 
-const { callTool } = await import("../src/tools.js");
-const { have, needsJsRegex, rgSearch, fdGlob, resetProbes } = await import("../src/fastsearch.js");
+const { callTool, IGNORE_DIRS: IGNORED } = await import("../src/tools.js");
+const { have, needsJsRegex, rgSearch, rgGlob, resetProbes } = await import("../src/fastsearch.js");
 const { readTodos } = await import("../src/store.js");
 const { notify, clearNotification, vibrate, resetNotifyProbe } = await import("../src/notify.js");
 
@@ -141,19 +141,74 @@ test("results are sorted, so truncation cuts the same list on both paths", async
   assert.match(capped.output, /more match\(es\)/, "it has to say the list was cut");
 });
 
-test("glob agrees between fd and the JavaScript walk", async (t) => {
-  const a = await fast("glob", { pattern: "**/*.js" });
-  const b = await slow("glob", { pattern: "**/*.js" });
-  assert.equal(a.ok, true, a.output);
-  if (!(await have("fd"))) {
-    // Still worth asserting the fallback is correct on its own terms.
-    assert.equal(a.output, b.output, "with fd absent both calls are the same code path");
-    t.diagnostic("fd is not installed here; only the JavaScript path was exercised");
-  } else {
-    assert.equal(a.output, b.output, `fd and JavaScript disagree\n--- fd ---\n${a.output}\n--- js ---\n${b.output}`);
+test("glob agrees between ripgrep and the JavaScript walk, on every pattern shape", async (t) => {
+  // Glob used to go through fd, and fd disagreed with the walk in three separate
+  // ways, every one of which surfaced as "no files match" - indistinguishable from
+  // a real empty result, so nothing fell back and the agent was told the file it
+  // was looking for did not exist. See rgGlob in src/fastsearch.js.
+  //
+  // The three shapes below are exactly the three that broke, so they are checked
+  // together rather than one representative being trusted to stand for the rest.
+  for (const pattern of ["*.js", "**/*.js", "src/*.js", "src/**/*.js", "*.ts", "**/*.md"]) {
+    const a = await fast("glob", { pattern });
+    const b = await slow("glob", { pattern });
+    assert.equal(a.ok, true, a.output);
+    assert.equal(
+      a.output,
+      b.output,
+      `ripgrep and JavaScript disagree for ${pattern}\n--- rg ---\n${a.output}\n--- js ---\n${b.output}`,
+    );
   }
-  assert.match(a.output, /top\.js/);
-  assert.ok(!a.output.includes("node_modules"), "ignored directories stay ignored");
+
+  // And the semantics themselves, so "they agree" cannot mean "both are wrong".
+  const top = await fast("glob", { pattern: "*.js" });
+  assert.match(top.output, /top\.js/);
+  assert.ok(!top.output.includes("src/deep/a.js"), "a slash-free glob stays in the current directory");
+
+  const deep = await fast("glob", { pattern: "**/*.js" });
+  assert.match(deep.output, /src\/deep\/a\.js/, "** has to cross directories");
+  assert.ok(!deep.output.includes("node_modules"), "ignored directories stay ignored");
+
+  if (!(await have("rg"))) t.diagnostic("ripgrep is not installed here; only the JavaScript path ran");
+});
+
+test("a glob is answered from ripgrep only when ripgrep is there", async (t) => {
+  if (!(await have("rg"))) {
+    t.skip("ripgrep is not installed here");
+    return;
+  }
+  const res = await rgGlob({
+    root: WORKSPACE,
+    pattern: "*.js",
+    limit: 50,
+    ignoreDirs: IGNORED,
+  });
+  assert.equal(res.ok, true, res.ok ? "" : res.reason);
+  assert.ok(res.files.includes("top.js"), `expected top.js in ${JSON.stringify(res.files)}`);
+  assert.ok(
+    !res.files.some((f) => f.startsWith("node_modules/")),
+    "the exclusions have to actually exclude",
+  );
+  assert.deepEqual(res.files, res.files.slice().sort(), "sorted, so the limit cuts the same set as the walk");
+});
+
+test("a glob matching nothing is an answer, and a broken run is a fallback", async () => {
+  const empty = await rgGlob({ root: WORKSPACE, pattern: "*.nothing", limit: 10, ignoreDirs: IGNORED });
+  if (await have("rg")) {
+    assert.equal(empty.ok, true, "no matches is an answer, not a failure");
+    assert.deepEqual(empty.files, []);
+  }
+
+  // A root that does not exist must fall back rather than report zero files: an
+  // empty answer here would be a lie the caller cannot detect.
+  const broken = await rgGlob({
+    root: path.join(WORKSPACE, "does-not-exist-anywhere"),
+    pattern: "*.js",
+    limit: 10,
+    ignoreDirs: [],
+  });
+  assert.equal(broken.ok, false);
+  assert.ok(broken.reason);
 });
 
 test("a missing binary is not an error, just the slower path", async () => {
@@ -170,8 +225,9 @@ test("a missing binary is not an error, just the slower path", async () => {
     assert.equal(rg.ok, false);
     assert.ok(rg.reason, "the caller should be able to say why it fell back");
 
-    const fd = await fdGlob({ root: WORKSPACE, pattern: "*.js", limit: 10, ignoreDirs: [] });
-    assert.equal(fd.ok, false);
+    const glob = await rgGlob({ root: WORKSPACE, pattern: "*.js", limit: 10, ignoreDirs: [] });
+    assert.equal(glob.ok, false);
+    assert.ok(glob.reason);
   } finally {
     delete process.env.TCA_NO_FASTSEARCH;
     resetProbes();
