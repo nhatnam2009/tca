@@ -491,6 +491,7 @@ export function bindEvents({
   onRefreshLive,
   onDownloadCatalog,
   onModelSearch,
+  onModelLibrarySearch,
 }) {
   const form = $("settings-form");
   if (form && onSaveSettings) {
@@ -523,8 +524,8 @@ export function bindEvents({
   const saveModelBtn = $("btn-save-model-id");
   if (saveModelBtn && onSaveModelId) saveModelBtn.addEventListener("click", onSaveModelId);
   const modelLibrarySearch = $("model-library-search");
-  if (modelLibrarySearch && actions.onModelLibrarySearch) {
-    modelLibrarySearch.addEventListener("input", actions.onModelLibrarySearch);
+  if (modelLibrarySearch && onModelLibrarySearch) {
+    modelLibrarySearch.addEventListener("input", onModelLibrarySearch);
   }
   const reloadBtn = $("btn-reload-config");
   if (reloadBtn && onReloadConfig) reloadBtn.addEventListener("click", onReloadConfig);
