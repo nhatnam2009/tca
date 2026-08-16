@@ -593,3 +593,24 @@ test("install.sh repairs a stale libcurl instead of silently losing .git", () =>
   // not. The guard has to check for real content, not just for the directory.
   assert.match(sh, /\[ -d "\$dest\/\.git" \] && \[ ! -e "\$dest\/src\/cli\.js" \]/, "only remove a partial clone");
 });
+
+test("the startup question and the wizard share one stdin reader", () => {
+  // Two sequential readline interfaces over process.stdin do work - checked by
+  // spawning it and feeding lines - so this is not guarding a hang. It pins the
+  // ownership rule, which is the part that would break quietly: the wizard reads
+  // five more answers after the [Y/n], and if it closed a borrowed interface the
+  // lender's finally block would be closing something already gone.
+  const js = fs.readFileSync(path.join(HERE, "..", "src", "cli.js"), "utf8");
+
+  assert.match(js, /async function cmdAdbSetup\(borrowed\)/, "the wizard should accept a lent interface");
+  assert.match(js, /await cmdAdbSetup\(rl\)/, "startup should lend its own, not open a second");
+  assert.match(js, /if \(!borrowed\) rl\.close\(\)/, "only the owner may close it");
+
+  // Standalone `tca adb-setup` still has to open one for itself.
+  assert.match(js, /borrowed \?\? readline\.createInterface/, "no lender means open one");
+  assert.match(js, /case "adb-setup":\s*\n\s*await cmdAdbSetup\(\);/, "the subcommand passes nothing");
+
+  // And nothing may call rl.close() directly inside the wizard any more.
+  const wizard = js.slice(js.indexOf("async function cmdAdbSetup("));
+  assert.ok(!wizard.includes("rl.close()") || wizard.includes("if (!borrowed) rl.close()"), "close goes through done()");
+});

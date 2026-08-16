@@ -234,27 +234,36 @@ async function setupPrivileges() {
     return;
   }
 
+  // One readline interface for the question *and* the wizard it leads into.
+  //
+  // Two sequential interfaces over process.stdin do work - I checked, by spawning
+  // the real thing and feeding it lines - so this is not fixing a hang. It is one
+  // fewer thing to be true: the wizard reads five answers after this one, and
+  // having a single owner of stdin for the whole exchange means none of that
+  // depends on close-then-reopen behaviour holding up on a phone's TTY.
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  let answer = "";
   try {
-    answer = (await rl.question(`  ${C.bold(T("boot.setupNow"))} [Y/n] `)).trim().toLowerCase();
-  } catch {
-    // stdin closed under us; treat it as "no" and get on with starting.
+    let answer = "";
+    try {
+      answer = (await rl.question(`  ${C.bold(T("boot.setupNow"))} [Y/n] `)).trim().toLowerCase();
+    } catch {
+      // stdin closed under us; treat it as "no" and get on with starting.
+    }
+    if (answer === "n" || answer === "no") {
+      console.log(`     ${C.dim(T("boot.skipped"))}`);
+      return;
+    }
+
+    // Into the real wizard rather than a second, worse copy of it inline here: it
+    // also offers root and Shizuku, and neither of those needs any pairing.
+    await cmdAdbSetup(rl);
+    // adb-setup marks a failed attempt on the exit code, which made sense when it
+    // was the whole process. The daemon is about to start and keep running, so
+    // leaving it set would have `nhatnam` exit non-zero for an unrelated reason.
+    process.exitCode = 0;
   } finally {
     rl.close();
   }
-  if (answer === "n" || answer === "no") {
-    console.log(`     ${C.dim(T("boot.skipped"))}`);
-    return;
-  }
-
-  // Into the real wizard rather than a second, worse copy of it inline here: it
-  // also offers root and Shizuku, and neither of those needs any pairing.
-  await cmdAdbSetup();
-  // adb-setup marks a failed attempt on the exit code, which made sense when it
-  // was the whole process. The daemon is about to start and keep running, so
-  // leaving it set would have `nhatnam` exit non-zero for an unrelated reason.
-  process.exitCode = 0;
 }
 
 function managePrivileges() {
@@ -508,8 +517,13 @@ function numFlag(args, name) {
  * this is the one place that has to be good.
  *
  * Four ways in, cheapest first. Root and Shizuku need no pairing at all.
+ *
+ * @param {import("node:readline/promises").Interface} [borrowed]
+ *   An interface to read from instead of opening one. The startup flow has already
+ *   asked a question on stdin and lends its own, so the whole exchange has a
+ *   single owner of the stream. The lender closes it; see done() below.
  */
-async function cmdAdbSetup() {
+async function cmdAdbSetup(borrowed) {
   if (!process.env.TERMUX_VERSION) {
     console.error("This command only does anything on Termux/Android.");
     console.error("On a PC, run the adb commands from your desktop shell directly.");
@@ -519,7 +533,12 @@ async function cmdAdbSetup() {
   const { config } = loadConfig();
   const lang = pickLang(config.lang);
   const T = (key, params) => t(lang, key, params);
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const rl = borrowed ?? readline.createInterface({ input: process.stdin, output: process.stdout });
+  // Closing a borrowed interface would end the lender's session too, and the
+  // lender still has a finally block that expects to do it.
+  const done = () => {
+    if (!borrowed) rl.close();
+  };
   const ask = (q) => rl.question(q);
   const step = (n, total, msg) => console.log(`\n${C.bold(C.cyan(T("power.step", { n, total })))} ${C.bold(msg)}`);
   const ok = (msg) => console.log(`  ${C.green("[ok]")} ${msg}`);
@@ -528,9 +547,10 @@ async function cmdAdbSetup() {
   const bail = (msg, detail) => {
     console.error(C.red(`  ${msg}`));
     if (detail) info(C.dim(String(detail).slice(0, 300)));
-    rl.close();
+    done();
     process.exitCode = 1;
   };
+
 
   console.log(C.bold(`\n${T("power.privSection")}`));
 
@@ -549,7 +569,7 @@ async function cmdAdbSetup() {
     console.log(`\n${T("power.applied", { ok: okCount, total: res.applied.length })}`);
     console.log(res.ok ? C.bold(C.green(T("power.appliedAll"))) : C.yellow(T("power.appliedSome")));
     console.log(C.dim("\ntca power"));
-    rl.close();
+    done();
   };
 
   // ---- already privileged? then there is nothing to set up ------------------
