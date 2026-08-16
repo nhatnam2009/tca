@@ -165,6 +165,7 @@ export async function serve(opts = {}) {
     if (method === "GET" && pathname === "/api/state") {
       const { config, raw } = loadConfig();
       const provider = config.providers[config.active];
+      const model = provider ? modelsFor(config.active).find((m) => m.id === provider.model) : null;
       return json(res, 200, {
         version: VERSION,
         workspace: config.workspace,
@@ -173,11 +174,30 @@ export async function serve(opts = {}) {
         providerReady: Boolean(provider?.apiKey || provider?.baseUrl?.includes("127.0.0.1")),
         active: config.active,
         model: provider?.model || "",
+        // The UI shows a context meter and a running cost, so it needs the two
+        // numbers behind them rather than having to guess from the model id.
+        contextWindow: model?.context || null,
+        pricing: model ? { input: model.input_cost, output: model.output_cost } : null,
+        reasoning: Boolean(model?.reasoning),
         providerCount: Object.keys(raw.providers).length,
+        mode: config.mode === "plan" ? "plan" : "build",
         autoApproveCommands: config.autoApproveCommands,
+        autoApproveEdits: config.autoApproveEdits !== false,
+        verifyEdits: config.verifyEdits !== false,
+        lang: config.lang || DEFAULT_LANG,
         catalog: catalogInfo(),
         sessions: listSessions(),
       });
+    }
+    // A dedicated route rather than a full config round trip: on a phone the mode
+    // toggle is tapped mid-conversation, and reading, patching and rewriting the
+    // whole config file to flip one word is a good way to lose the rest of it.
+    if (method === "POST" && pathname === "/api/mode") {
+      const body = await readJson(req);
+      const mode = body.mode === "plan" ? "plan" : "build";
+      const { raw } = loadConfig();
+      saveConfig({ ...raw, mode });
+      return json(res, 200, { ok: true, mode });
     }
     if (method === "GET" && pathname === "/api/status") {
       const { config } = loadConfig();
@@ -295,11 +315,17 @@ export async function serve(opts = {}) {
         return openStream(req, res, id);
       }
       if (method === "POST" && sub === "/message") {
-        const { text } = await readJson(req);
+        const body = await readJson(req);
+        const text = body.text;
         if (typeof text !== "string" || !text.trim()) return json(res, 400, { error: "text is required" });
         if (runners.get(id)?.running) return json(res, 409, { error: "a turn is already running" });
 
         const { config } = loadConfig(); // re-read: settings may have changed
+        // The mode the message was sent in wins over the saved one. The user taps
+        // the toggle and sends in the same gesture; making them wait for a config
+        // write to land first is how you get a plan-mode question answered by an
+        // agent that has already started editing.
+        if (body.mode === "plan" || body.mode === "build") config.mode = body.mode;
         const runner = new Runner({ sessionId: id, config, emit: (e) => emitTo(id, e) });
         runners.set(id, runner);
         json(res, 202, { ok: true });

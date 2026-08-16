@@ -26,7 +26,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { run, hasCommand } from "./exec.js";
+import { runArgv, hasCommand } from "./exec.js";
 
 /** A per-edit hook has to stay out of the way; the whole-project ones get more. */
 const FAST_TIMEOUT = 25_000;
@@ -118,8 +118,9 @@ const CHECKERS = {
   async node({ workspace, files, signal }) {
     const bad = [];
     for (const rel of files) {
-      const { code, output } = await run({
-        command: `node --check ${quote(rel)}`,
+      const { code, output } = await runArgv({
+        file: process.execPath,
+        args: ["--check", rel],
         cwd: workspace,
         timeout: FAST_TIMEOUT,
         signal,
@@ -140,18 +141,29 @@ const CHECKERS = {
    */
   async tsc({ workspace, files, signal }) {
     if (!fs.existsSync(path.join(workspace, "tsconfig.json"))) return null;
-    const local = path.join(workspace, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-    const cmd = fs.existsSync(local) ? quote(local) : (await hasCommand("tsc")) ? "tsc" : null;
-    if (!cmd) return null;
+    // The project's own copy, run through node rather than through the .bin
+    // wrapper: on Windows that wrapper is a .cmd, which Node will not spawn
+    // without a shell, and a shell is exactly what we are avoiding here.
+    const local = path.join(workspace, "node_modules", "typescript", "bin", "tsc");
+    const invocation = fs.existsSync(local)
+      ? { file: process.execPath, args: [local, "--noEmit", "--pretty", "false"] }
+      : (await hasCommand("tsc"))
+        ? { file: "tsc", args: ["--noEmit", "--pretty", "false"] }
+        : null;
+    if (!invocation) return null;
 
-    const { code, output, timedOut } = await run({
-      command: `${cmd} --noEmit --pretty false`,
+    const { code, output, timedOut } = await runArgv({
+      ...invocation,
       cwd: workspace,
       timeout: PROJECT_TIMEOUT,
       signal,
     });
     if (timedOut) {
-      return { checker: "tsc --noEmit", ok: false, report: `timed out after ${PROJECT_TIMEOUT / 1000}s, so the types are unverified` };
+      return {
+        checker: "tsc --noEmit",
+        ok: false,
+        report: `timed out after ${PROJECT_TIMEOUT / 1000}s, so the types are unverified`,
+      };
     }
     if (code === 0) return { checker: "tsc --noEmit", ok: true, report: "" };
     return { checker: "tsc --noEmit", ok: false, report: focus(output, files) };
@@ -173,10 +185,10 @@ const CHECKERS = {
 
   /** ruff when the project has it, otherwise the compiler that ships with Python. */
   async python({ workspace, files, signal }) {
-    const list = files.map(quote).join(" ");
     if (await hasCommand("ruff")) {
-      const { code, output } = await run({
-        command: `ruff check --no-cache --output-format concise ${list}`,
+      const { code, output } = await runArgv({
+        file: "ruff",
+        args: ["check", "--no-cache", "--output-format", "concise", ...files],
         cwd: workspace,
         timeout: FAST_TIMEOUT,
         signal,
@@ -186,8 +198,9 @@ const CHECKERS = {
     }
     const python = (await hasCommand("python3")) ? "python3" : (await hasCommand("python")) ? "python" : null;
     if (!python) return null;
-    const { code, output } = await run({
-      command: `${python} -m py_compile ${list}`,
+    const { code, output } = await runArgv({
+      file: python,
+      args: ["-m", "py_compile", ...files],
       cwd: workspace,
       timeout: FAST_TIMEOUT,
       signal,
@@ -199,8 +212,9 @@ const CHECKERS = {
   /** gofmt -e reports syntax errors and costs nothing; go build would be minutes. */
   async go({ workspace, files, signal }) {
     if (!(await hasCommand("gofmt"))) return null;
-    const { code, output } = await run({
-      command: `gofmt -l -e ${files.map(quote).join(" ")}`,
+    const { code, output } = await runArgv({
+      file: "gofmt",
+      args: ["-l", "-e", ...files],
       cwd: workspace,
       timeout: FAST_TIMEOUT,
       signal,
@@ -218,8 +232,9 @@ const CHECKERS = {
     if (!(await hasCommand("bash"))) return null;
     const bad = [];
     for (const rel of files) {
-      const { code, output } = await run({
-        command: `bash -n ${quote(rel)}`,
+      const { code, output } = await runArgv({
+        file: "bash",
+        args: ["-n", rel],
         cwd: workspace,
         timeout: FAST_TIMEOUT,
         signal,
@@ -286,10 +301,4 @@ function clip(text) {
   const t = (text || "").trim();
   if (t.length <= MAX_REPORT) return t;
   return `${t.slice(0, MAX_REPORT)}\n[... ${t.length - MAX_REPORT} more characters ...]`;
-}
-
-/** Quote a path for the shell. Paths come from the model, so this is not optional. */
-function quote(p) {
-  if (process.platform === "win32") return `"${p.replace(/"/g, '""')}"`;
-  return `'${p.replace(/'/g, `'\\''`)}'`;
 }

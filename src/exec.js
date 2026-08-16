@@ -70,12 +70,49 @@ export function killTree(child) {
  * @param {number} [args.maxOutput]
  * @param {AbortSignal} [args.signal]
  * @param {Record<string,string>} [args.env]
- * @returns {Promise<{code: number|null, signal: string|null, output: string, timedOut: boolean, truncated: boolean, spawnError?: string}>}
+ * @returns {Promise<ExecResult>}
  */
-export function run({ command, cwd, timeout = 120_000, maxOutput = 120_000, signal, env }) {
+export function run({ command, cwd, timeout, maxOutput, signal, env }) {
+  const { shell, flag } = pickShell();
+  return spawnCollect(shell, [flag, command], { cwd, timeout, maxOutput, signal, env });
+}
+
+/**
+ * Run a program with an argv array and no shell at all.
+ *
+ * This is what anything taking a model-supplied path must use. Quoting a path for
+ * a shell is a losing game across platforms - the first version of the diagnostics
+ * hook did it and produced `Cannot find module '"fine.mjs"'` on Windows, because
+ * cmd.exe and Node's own argv escaping each quoted it once. With an argv array
+ * there is nothing to quote and no metacharacter can mean anything.
+ *
+ * @param {object} args
+ * @param {string} args.file
+ * @param {string[]} args.args
+ * @param {string} args.cwd
+ * @param {number} [args.timeout]
+ * @param {number} [args.maxOutput]
+ * @param {AbortSignal} [args.signal]
+ * @param {Record<string,string>} [args.env]
+ * @returns {Promise<ExecResult>}
+ */
+export function runArgv({ file, args, cwd, timeout, maxOutput, signal, env }) {
+  return spawnCollect(file, args, { cwd, timeout, maxOutput, signal, env });
+}
+
+/**
+ * @typedef {{code: number|null, signal: string|null, output: string, timedOut: boolean,
+ *   truncated: boolean, spawnError?: string}} ExecResult
+ */
+
+/**
+ * @param {string} file
+ * @param {string[]} argv
+ * @returns {Promise<ExecResult>}
+ */
+function spawnCollect(file, argv, { cwd, timeout = 120_000, maxOutput = 120_000, signal, env }) {
   return new Promise((resolve) => {
-    const { shell, flag } = pickShell();
-    const child = spawn(shell, [flag, command], {
+    const child = spawn(file, argv, {
       cwd,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
@@ -113,9 +150,7 @@ export function run({ command, cwd, timeout = 120_000, maxOutput = 120_000, sign
     child.on("error", (err) =>
       finish({ code: null, signal: null, output: "", timedOut: false, truncated: false, spawnError: err.message }),
     );
-    child.on("close", (code, sig) =>
-      finish({ code, signal: sig, output: out.trimEnd(), timedOut, truncated }),
-    );
+    child.on("close", (code, sig) => finish({ code, signal: sig, output: out.trimEnd(), timedOut, truncated }));
   });
 }
 

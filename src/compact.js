@@ -71,18 +71,30 @@ export function estimateTokens(messages) {
 /**
  * Every index at which the history can be cut without orphaning a tool call.
  *
- * A `user` message always starts a fresh turn: everything before it is a
- * completed assistant/tool cycle. Index 0 is excluded because cutting there
- * removes nothing, and the end is excluded because cutting there removes
- * everything.
+ * A cut at `i` is safe exactly when no tool_use is still waiting for its result
+ * at that point - then everything before `i` is self-contained and everything
+ * from `i` on stands on its own.
+ *
+ * That is a wider set than "every user message", and deliberately so: a single
+ * turn can overflow the context window all by itself (forty steps, each reading a
+ * file), and if the only legal cuts were turn starts there would be nothing to do
+ * about it but send an over-budget prompt and watch it fail.
+ *
+ * Index 0 is excluded because cutting there removes nothing, and the end is
+ * excluded because cutting there removes everything.
  * @param {any[]} messages
  * @returns {number[]}
  */
 export function turnBoundaries(messages) {
   /** @type {number[]} */
   const out = [];
-  for (let i = 1; i < messages.length; i++) {
-    if (messages[i]?.role === "user") out.push(i);
+  /** @type {Set<string>} */
+  const open = new Set();
+  for (let i = 0; i < messages.length; i++) {
+    if (i > 0 && !open.size) out.push(i);
+    const m = messages[i];
+    if (m?.role === "assistant") for (const c of m.toolCalls || []) open.add(c.id);
+    else if (m?.role === "tool") for (const r of m.results || []) open.delete(r.id);
   }
   return out;
 }
@@ -135,17 +147,18 @@ export function repairHistory(messages) {
   /** @type {Set<string>} */
   const open = new Set();
 
+  /** Synthetic results for whatever is still waiting, as one message. */
+  const stubs = () =>
+    [...open].map((id) => ({
+      id,
+      name: "unknown",
+      output: "[interrupted: this tool never ran, the turn was cut short]",
+      ok: false,
+    }));
+
   const settle = () => {
     if (!open.size) return;
-    out.push({
-      role: "tool",
-      results: [...open].map((id) => ({
-        id,
-        name: "unknown",
-        output: "[interrupted: this tool never ran, the turn was cut short]",
-        ok: false,
-      })),
-    });
+    out.push({ role: "tool", results: stubs() });
     open.clear();
   };
 
@@ -157,8 +170,11 @@ export function repairHistory(messages) {
     } else if (m?.role === "tool") {
       const kept = (m.results || []).filter((r) => open.has(r.id));
       for (const r of kept) open.delete(r.id);
-      if (kept.length) out.push({ ...m, results: kept });
-      settle(); // anything still open was not answered by this message
+      // One tool message, not two. Two in a row would both map to the user role
+      // on the Anthropic wire and break its strict role alternation.
+      const results = [...kept, ...stubs()];
+      open.clear();
+      if (results.length) out.push({ ...m, results });
     } else {
       settle();
       out.push(m);

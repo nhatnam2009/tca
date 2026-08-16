@@ -173,10 +173,10 @@ const CACHE = { type: "ephemeral" };
 function anthropicBody({ provider, system, messages, tools }) {
   const cache = provider.promptCache !== false;
   /** @type {any[]} */
-  const out = [];
+  const raw = [];
   for (const m of messages) {
     if (m.role === "user") {
-      out.push({ role: "user", content: [{ type: "text", text: m.content }] });
+      raw.push({ role: "user", content: [{ type: "text", text: m.content }] });
     } else if (m.role === "assistant") {
       /** @type {any[]} */
       const content = [];
@@ -190,9 +190,9 @@ function anthropicBody({ provider, system, messages, tools }) {
       for (const c of m.toolCalls || []) {
         content.push({ type: "tool_use", id: c.id, name: c.name, input: c.input });
       }
-      if (content.length) out.push({ role: "assistant", content });
+      if (content.length) raw.push({ role: "assistant", content });
     } else if (m.role === "tool") {
-      out.push({
+      raw.push({
         role: "user",
         content: m.results.map((r) => ({
           type: "tool_result",
@@ -203,6 +203,8 @@ function anthropicBody({ provider, system, messages, tools }) {
       });
     }
   }
+
+  const out = coalesceUserTurns(raw);
 
   if (cache) {
     // Last two user-role entries, which after the mapping above includes tool
@@ -238,6 +240,38 @@ function anthropicBody({ provider, system, messages, tools }) {
         }
       : {}),
   };
+}
+
+/**
+ * Merge adjacent user-role messages into one.
+ *
+ * Anthropic enforces strict role alternation, and the neutral history has three
+ * roles that map onto two: both `user` and `tool` become user-side. Two in a row
+ * is not exotic - a turn stopped after its tool results were stored leaves a tool
+ * message followed by the next user message, and pressing Stop before the model
+ * replied leaves two user messages - so this has to be handled rather than
+ * asserted away.
+ *
+ * tool_result blocks are moved to the front of the merged content, which the API
+ * requires.
+ * @param {any[]} entries
+ */
+function coalesceUserTurns(entries) {
+  /** @type {any[]} */
+  const out = [];
+  for (const entry of entries) {
+    const prev = out[out.length - 1];
+    if (prev && prev.role === "user" && entry.role === "user") {
+      const merged = [...prev.content, ...entry.content];
+      prev.content = [
+        ...merged.filter((b) => b.type === "tool_result"),
+        ...merged.filter((b) => b.type !== "tool_result"),
+      ];
+      continue;
+    }
+    out.push({ ...entry, content: [...entry.content] });
+  }
+  return out;
 }
 
 function openaiBody({ provider, system, messages, tools }) {

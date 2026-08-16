@@ -233,6 +233,27 @@ export const DICT = {
     "chat.deleteConfirm": "Xoá \"{name}\"? Không thể hoàn tác.",
     "chat.deleted": "Đã xoá phiên",
     "chat.sessionFallback": "Phiên {id}",
+    "chat.thinking": "suy nghĩ",
+    "chat.step": "Bước {n}/{of}…",
+    "chat.compacting": "Hội thoại đã dài. Đang tóm tắt phần cũ để vừa cửa sổ ngữ cảnh…",
+    "chat.compacted": "Đã tóm tắt: {before} → {after} token. Phần cũ vẫn còn ở trên để bạn đọc lại.",
+    "chat.cacheHit": "{n} token đọc từ cache",
+    "chat.noKey": "Provider đang chọn chưa có API key dùng được. Mở Cài đặt.",
+
+    // ---------------------------------------------------------------- mode
+    "mode.build": "build",
+    "mode.plan": "plan",
+    "mode.build.aria": "Chế độ build: agent được sửa file. Bấm để chuyển sang plan.",
+    "mode.plan.aria": "Chế độ plan: chỉ đọc, không sửa file. Bấm để chuyển sang build.",
+
+    // -------------------------------------------------------------- sub-agent
+    "sub.title": "agent con",
+    "sub.kind.explore": "chỉ đọc",
+    "sub.kind.general": "toàn quyền",
+
+    // ------------------------------------------------------------------ meter
+    "meter.context": "ngữ cảnh {pct}% ({used}/{window})",
+    "meter.cached": "{n} từ cache",
 
     // -------------------------------------------------------------- approval
     "approval.command.title": "Chạy lệnh này?",
@@ -255,6 +276,7 @@ export const DICT = {
     "tool.output": "kết quả",
     "tool.ok": "xong",
     "tool.error": "lỗi",
+    "tool.unknown": "không rõ",
     "code.copy": "Chép",
     "code.copied": "Đã chép",
     "code.copyFailed": "Không chép được",
@@ -269,6 +291,8 @@ export const DICT = {
     "settings.reload": "Tải lại từ đĩa",
     "settings.langLabel": "Ngôn ngữ",
     "settings.langHint": "Áp dụng cho cả web UI và lệnh tca doctor trong terminal.",
+    "settings.sharedWarning":
+      "File này nằm trên bộ nhớ chung, nên app nào có quyền “Truy cập tất cả file” đều đọc được. Muốn tránh, hãy ghi key là ${TÊN_BIẾN} để đọc từ biến môi trường thay vì lưu ở đây.",
 
     "provider.legend": "Provider",
     "provider.active": "Provider đang dùng",
@@ -629,6 +653,27 @@ export const DICT = {
     "chat.deleteConfirm": "Delete \"{name}\"? This cannot be undone.",
     "chat.deleted": "Session deleted",
     "chat.sessionFallback": "Session {id}",
+    "chat.thinking": "thinking",
+    "chat.step": "Step {n}/{of}\u2026",
+    "chat.compacting": "The conversation got long. Summarising the older part to fit the context window\u2026",
+    "chat.compacted": "Compacted: {before} \u2192 {after} tokens. The older part is still above if you want to read it.",
+    "chat.cacheHit": "{n} tokens read from cache",
+    "chat.noKey": "No usable API key for the active provider. Open Settings.",
+
+    // ---------------------------------------------------------------- mode
+    "mode.build": "build",
+    "mode.plan": "plan",
+    "mode.build.aria": "Build mode: the agent may change files. Tap to switch to plan.",
+    "mode.plan.aria": "Plan mode: read-only, no file changes. Tap to switch to build.",
+
+    // -------------------------------------------------------------- sub-agent
+    "sub.title": "sub-agent",
+    "sub.kind.explore": "read-only",
+    "sub.kind.general": "full access",
+
+    // ------------------------------------------------------------------ meter
+    "meter.context": "context {pct}% ({used}/{window})",
+    "meter.cached": "{n} from cache",
 
     // -------------------------------------------------------------- approval
     "approval.command.title": "Run this command?",
@@ -651,6 +696,7 @@ export const DICT = {
     "tool.output": "output",
     "tool.ok": "ok",
     "tool.error": "error",
+    "tool.unknown": "unknown",
     "code.copy": "Copy",
     "code.copied": "Copied",
     "code.copyFailed": "Failed",
@@ -665,6 +711,8 @@ export const DICT = {
     "settings.reload": "Reload from disk",
     "settings.langLabel": "Language",
     "settings.langHint": "Applies to the web UI and to tca doctor in the terminal.",
+    "settings.sharedWarning":
+      "This file is on shared storage, so any app with \u201cAll files access\u201d can read it. Write the key as ${VAR_NAME} to read it from the environment instead of storing it here.",
 
     "provider.legend": "Provider",
     "provider.active": "Active provider",

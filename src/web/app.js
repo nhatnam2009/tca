@@ -139,6 +139,8 @@ function redrawDynamicText() {
     if (streaming) setStatus(t("chat.working"));
     fillSessionSelect();
     renderCatalogInfo();
+    setMode(mode, false);
+    renderMeter();
     if (powerData) renderPower(powerData);
   } catch {
     // A redraw is cosmetic; never let it break a language switch.
@@ -573,6 +575,135 @@ function renderProseLines(lines) {
   return frag;
 }
 
+/* --------------------------------------------------------- syntax highlight */
+
+/**
+ * Tiny syntax highlighter.
+ *
+ * Not a parser: one regex per language family, matched left to right, first
+ * alternative wins. That is enough to make code readable and cannot be wrong in
+ * a way that matters - a mis-coloured token is a cosmetic bug, and the text is
+ * always the exact text the model sent.
+ *
+ * Built with createElement/textContent like everything else here. The renderer is
+ * loaded into a DOM stub with no innerHTML on it (see test/markdown.test.mjs)
+ * precisely so this file cannot quietly grow an injection hole.
+ */
+
+const KEYWORDS = {
+  c: "as async await break case catch class const continue debugger default delete do else enum export extends finally for from function get if implements import in instanceof interface let new of private protected public readonly return satisfies set static super switch this throw try type typeof var void while with yield",
+  py: "and as assert async await break class continue def del elif else except finally for from global if import in is lambda match new nonlocal not or pass raise return try while with yield None True False self",
+  go: "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var nil true false",
+  rs: "as async await break const continue crate dyn else enum extern fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait type unsafe use where while",
+  sh: "if then else elif fi for while do done case esac in function return exit local export readonly set unset source shift trap",
+  sql: "select from where group by order having insert into values update set delete create table drop alter index join left right inner outer on as and or not null limit offset",
+};
+
+/** Which token grammar to use for a fence tag. */
+const SYNTAX = {
+  js: { kw: KEYWORDS.c, line: "//", block: true },
+  jsx: { kw: KEYWORDS.c, line: "//", block: true },
+  mjs: { kw: KEYWORDS.c, line: "//", block: true },
+  cjs: { kw: KEYWORDS.c, line: "//", block: true },
+  ts: { kw: KEYWORDS.c, line: "//", block: true },
+  tsx: { kw: KEYWORDS.c, line: "//", block: true },
+  java: { kw: KEYWORDS.c, line: "//", block: true },
+  c: { kw: KEYWORDS.c, line: "//", block: true },
+  cpp: { kw: KEYWORDS.c, line: "//", block: true },
+  cs: { kw: KEYWORDS.c, line: "//", block: true },
+  swift: { kw: KEYWORDS.c, line: "//", block: true },
+  kotlin: { kw: KEYWORDS.c, line: "//", block: true },
+  css: { kw: "", line: "", block: true },
+  json: { kw: "true false null", line: "", block: false },
+  py: { kw: KEYWORDS.py, line: "#", block: false },
+  python: { kw: KEYWORDS.py, line: "#", block: false },
+  go: { kw: KEYWORDS.go, line: "//", block: true },
+  rs: { kw: KEYWORDS.rs, line: "//", block: true },
+  rust: { kw: KEYWORDS.rs, line: "//", block: true },
+  sh: { kw: KEYWORDS.sh, line: "#", block: false },
+  bash: { kw: KEYWORDS.sh, line: "#", block: false },
+  zsh: { kw: KEYWORDS.sh, line: "#", block: false },
+  shell: { kw: KEYWORDS.sh, line: "#", block: false },
+  yaml: { kw: "true false null", line: "#", block: false },
+  yml: { kw: "true false null", line: "#", block: false },
+  toml: { kw: "true false", line: "#", block: false },
+  sql: { kw: KEYWORDS.sql, line: "--", block: false },
+  html: { kw: "", line: "", block: false, markup: true },
+  xml: { kw: "", line: "", block: false, markup: true },
+  md: null,
+  markdown: null,
+  text: null,
+  "": null,
+};
+
+/** Escape a string for use inside a regex alternative. */
+function reEscape(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Build (and cache) the token regex for one language config. */
+const grammarCache = new Map();
+function grammarFor(name) {
+  if (grammarCache.has(name)) return grammarCache.get(name);
+  const cfg = SYNTAX[name];
+  let grammar = null;
+  if (cfg) {
+    const parts = [];
+    // Order matters: comments and strings must win over everything, or a keyword
+    // inside a comment gets coloured as code.
+    if (cfg.block) parts.push("(/\\*[\\s\\S]*?(?:\\*/|$))"); // 1 block comment
+    else parts.push("(\\u0000)"); // keep the group numbering stable
+    parts.push(cfg.line ? `(${reEscape(cfg.line)}[^\\n]*)` : "(\\u0000)"); // 2 line comment
+    parts.push("(\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'|`(?:[^`\\\\]|\\\\.)*`)"); // 3 string
+    parts.push("(\\b\\d[\\w.]*\\b)"); // 4 number
+    parts.push(cfg.kw ? `\\b(${cfg.kw.trim().split(/\s+/).map(reEscape).join("|")})\\b` : "(\\u0000)"); // 5 keyword
+    parts.push("\\b([A-Za-z_$][\\w$]*)(?=\\s*\\()"); // 6 call
+    parts.push(cfg.markup ? "(<[^>\\n]*>)" : "(\\u0000)"); // 7 tag
+    grammar = new RegExp(parts.join("|"), "g");
+  }
+  grammarCache.set(name, grammar);
+  return grammar;
+}
+
+const TOKEN_CLASS = ["tok-comment", "tok-comment", "tok-str", "tok-num", "tok-kw", "tok-fn", "tok-tag"];
+
+/**
+ * Highlighted code as a DocumentFragment. Unknown languages come back as one
+ * plain text node, which is the right answer rather than a guess.
+ */
+function highlight(code, lang) {
+  const frag = document.createDocumentFragment();
+  const name = String(lang || "").toLowerCase().split(/[\s:]/)[0];
+  const grammar = grammarFor(name);
+  if (!grammar) {
+    frag.appendChild(document.createTextNode(code));
+    return frag;
+  }
+  grammar.lastIndex = 0;
+  let last = 0;
+  let m;
+  while ((m = grammar.exec(code)) !== null) {
+    // A zero-length match would spin forever; the \u0000 placeholders can never
+    // match real text but a malformed grammar still must not hang the page.
+    if (m[0] === "") {
+      grammar.lastIndex++;
+      continue;
+    }
+    if (m.index > last) frag.appendChild(document.createTextNode(code.slice(last, m.index)));
+    let cls = "tok-plain";
+    for (let g = 1; g <= 7; g++) {
+      if (m[g] != null) {
+        cls = TOKEN_CLASS[g - 1];
+        break;
+      }
+    }
+    frag.appendChild(el("span", cls, m[0]));
+    last = m.index + m[0].length;
+  }
+  if (last < code.length) frag.appendChild(document.createTextNode(code.slice(last)));
+  return frag;
+}
+
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -592,10 +723,10 @@ async function copyText(text) {
   }
 }
 
-/** A <pre><code> block with a Copy button. `tabIndex` lets keyboards scroll it. */
+/** A <pre><code> block with a language tag, a Copy button and highlighting. */
 function codeBlock(code, lang) {
   const head = el("div", "code-head");
-  const btn = el("button", "btn small", t("code.copy"));
+  const btn = el("button", "btn small ghost", t("code.copy"));
   btn.type = "button";
   btn.setAttribute("aria-label", t("code.copyAria"));
   btn.addEventListener("click", async () => {
@@ -603,9 +734,16 @@ function codeBlock(code, lang) {
     btn.textContent = ok ? t("code.copied") : t("code.copyFailed");
     setTimeout(() => (btn.textContent = t("code.copy")), 1200);
   });
-  head.append(el("span", "code-lang", lang || "code"), btn);
+  head.append(el("span", "code-lang", lang || "text"), btn);
+
+  const p = el("pre", "code-pre");
+  p.tabIndex = 0;
+  const codeEl = el("code");
+  codeEl.appendChild(highlight(String(code == null ? "" : code), lang));
+  p.appendChild(codeEl);
+
   const wrap = el("div", "code");
-  wrap.append(head, pre(code));
+  wrap.append(head, p);
   return wrap;
 }
 
@@ -668,6 +806,11 @@ const messagesEl = () => $("messages");
 const BUSY = () => t("chat.working");
 
 let state = null; // last /api/state payload
+/**
+ * build or plan. Held in the page as well as on the server because it is toggled
+ * mid-conversation and rides along with each message; see send().
+ */
+let mode = "build";
 let sessions = [];
 let sessionId = null;
 let streaming = false;
@@ -707,10 +850,17 @@ function messageHost() {
   return m;
 }
 
-/** Append an empty message bubble and hand back its parts. */
+/**
+ * Append an empty message row and hand back its parts.
+ *
+ * Not a chat bubble. A coding transcript is mostly assistant prose, code and tool
+ * output, and bubbles waste the horizontal space that a phone has least of - so
+ * the role lives in a narrow gutter label and the body gets the full width.
+ */
 function makeBubble(role) {
   const bubble = el("article", `msg ${role}`);
   bubble.setAttribute("aria-label", role === "user" ? t("chat.you") : t("chat.assistant"));
+  bubble.appendChild(el("div", "msg-gutter", role === "user" ? t("chat.you") : t("chat.assistant")));
   const body = el("div", "msg-body");
   bubble.appendChild(body);
   messageHost().appendChild(bubble);
@@ -726,9 +876,79 @@ function footerOf(t) {
 function ensureTurn() {
   if (turn) return turn;
   const { bubble, body } = makeBubble("assistant");
-  turn = { bubble, body, text: null, footer: null, tools: new Map() };
+  turn = { bubble, body, text: null, footer: null, tools: new Map(), subs: new Map(), reasoning: null };
   scrollToBottom();
   return turn;
+}
+
+/**
+ * Where an event's output belongs.
+ *
+ * Sub-agent events arrive tagged with the id of the sub-agent that produced them,
+ * and they must land inside that sub-agent's block rather than in the parent's
+ * transcript - otherwise a delegated investigation dumps twenty tool rows into
+ * the middle of the answer and the nesting that made it worth delegating is
+ * invisible.
+ */
+function hostFor(ev) {
+  const cur = ensureTurn();
+  if (ev && ev.subagent) {
+    const sub = cur.subs.get(String(ev.subagent));
+    if (sub) return sub.body;
+  }
+  return cur.body;
+}
+
+/**
+ * A collapsed block for one delegated task.
+ *
+ * Open while it runs, because a phone user watching a two-minute sub-agent with
+ * nothing on screen assumes the app has hung. Collapsed the moment it finishes,
+ * because by then only its answer matters.
+ */
+function subagentBlock(ev) {
+  const cur = ensureTurn();
+  const id = String(ev.id);
+  if (cur.subs.has(id)) return cur.subs.get(id);
+  const badge = el("span", "tool-state", "\u2026");
+  const sum = el("summary");
+  sum.append(
+    el("span", "tool-caret", "\u203a"),
+    el("span", "tool-name", t("sub.title")),
+    el("span", "tool-arg", ev.kind === "general" ? t("sub.kind.general") : t("sub.kind.explore")),
+    badge,
+  );
+  const body = el("div", "tool-body");
+  const block = el("details", "subagent");
+  block.open = true;
+  block.append(sum, body);
+  cur.body.appendChild(block);
+  cur.text = null; // text after this starts a new block, keeping stream order
+  const handle = { block, badge, body, tools: new Map() };
+  cur.subs.set(id, handle);
+  scrollToBottom();
+  return handle;
+}
+
+/**
+ * The model's thinking, in a block that is collapsed by default.
+ *
+ * Reasoning models emit far more of this than of the answer, and on a phone
+ * screen it buries the part the user asked for. But it is not hidden either: when
+ * an agent goes wrong, the thinking is usually where you can see why.
+ */
+function reasoningBlock() {
+  const cur = ensureTurn();
+  if (cur.reasoning) return cur.reasoning;
+  const sum = el("summary");
+  sum.append(el("span", "tool-caret", "\u203a"), el("span", "tool-name", t("chat.thinking")));
+  const node = el("div", "reason-body");
+  const block = el("details", "reasoning");
+  block.append(sum, node);
+  cur.body.appendChild(block);
+  cur.text = null;
+  cur.reasoning = { block, node, raw: "" };
+  return cur.reasoning;
 }
 
 /**
@@ -748,20 +968,37 @@ function scheduleRender(block) {
 
 function flushRender() {
   rafPending = false;
-  for (const b of dirtyBlocks) renderRich(b.node, b.raw);
+  for (const b of dirtyBlocks) {
+    // Thinking is rendered as plain text on purpose: it is a stream of half
+    // sentences, and running a markdown parser over it produces stray headings
+    // and half-open code fences that flicker as more arrives.
+    if (b.plain) b.node.textContent = b.raw;
+    else renderRich(b.node, b.raw);
+  }
   dirtyBlocks.clear();
   scrollToBottom();
 }
 
-function appendDelta(text) {
-  const t = ensureTurn();
-  if (!t.text) {
+/** @param {any} ev  the event, so sub-agent text lands inside its own block */
+function appendDelta(text, ev) {
+  const cur = ensureTurn();
+  const host = hostFor(ev);
+  const sub = ev && ev.subagent ? cur.subs.get(String(ev.subagent)) : null;
+  const slot = sub || cur;
+  if (!slot.text) {
     const node = el("div", "rich");
-    t.body.appendChild(node);
-    t.text = { node, raw: "" };
+    host.appendChild(node);
+    slot.text = { node, raw: "" };
   }
-  t.text.raw += String(text);
-  scheduleRender(t.text);
+  slot.text.raw += String(text);
+  scheduleRender(slot.text);
+}
+
+function appendReasoning(text) {
+  const block = reasoningBlock();
+  block.raw += String(text);
+  block.plain = true;
+  scheduleRender(block);
 }
 
 /** One-line summary of a tool's input object, for the collapsed row. */
@@ -868,11 +1105,17 @@ function approvalCard(ev) {
 /**
  * A short server-side notice (context nearly full, approval timed out). Goes in
  * the current turn so it keeps its place in the transcript.
+ * @param {string} text
+ * @param {"info"|"warn"} [kind]
+ * @param {any} [ev]
  */
-function noteLine(text) {
-  const host = turn ? turn.body : messageHost();
-  host.appendChild(el("p", "tool-note", String(text)));
-  if (turn) turn.text = null; // later text starts a fresh block, preserving order
+function noteLine(text, kind = "info", ev) {
+  const host = turn ? hostFor(ev) : messageHost();
+  host.appendChild(el("p", `tool-note ${kind}`, String(text)));
+  if (turn) {
+    const sub = ev && ev.subagent ? turn.subs.get(String(ev.subagent)) : null;
+    (sub || turn).text = null; // later text starts a fresh block, preserving order
+  }
   scrollToBottom();
 }
 
@@ -930,19 +1173,45 @@ function renderTodo(items) {
   scrollToBottom();
 }
 
-/** Render one stored message from GET /api/sessions/:id. */
-function renderStoredMessage(msg) {
+/**
+ * Render one stored message from GET /api/sessions/:id.
+ *
+ * `results` is the tool message that followed this one. The two are stored
+ * separately - an assistant message holds the calls, the next message holds their
+ * output - so reloading a session used to redraw every tool row as an empty
+ * pending one, because the outputs were in a message this function never saw.
+ * @param {any} msg
+ * @param {Map<string, {output: string, ok: boolean}>} [results]
+ */
+function renderStoredMessage(msg, results) {
   const role = msg.role === "user" ? "user" : "assistant";
   const { body } = makeBubble(role);
   if (role === "user") {
     body.appendChild(el("div", "prose", String(msg.content ?? "")));
     return;
   }
-  const rich = el("div", "rich");
-  renderRich(rich, String(msg.content ?? ""));
-  body.appendChild(rich);
+  if (msg.reasoning) {
+    const sum = el("summary");
+    sum.append(el("span", "tool-caret", "\u203a"), el("span", "tool-name", t("chat.thinking")));
+    const block = el("details", "reasoning");
+    block.append(sum, el("div", "reason-body", String(msg.reasoning)));
+    body.appendChild(block);
+  }
+  if (msg.content) {
+    const rich = el("div", "rich");
+    renderRich(rich, String(msg.content));
+    body.appendChild(rich);
+  }
   for (const call of msg.toolCalls || []) {
-    finishToolRow(toolRow(body, call.name, call.input), call.ok !== false, call.output);
+    const got = results && results.get(String(call.id));
+    const handle = toolRow(body, call.name, call.input);
+    if (got) finishToolRow(handle, got.ok !== false, got.output);
+    else handle.badge.textContent = t("tool.unknown");
+  }
+  if (msg.usage && (msg.usage.input || msg.usage.output)) {
+    body.appendChild(
+      el("p", "msg-footer", t("chat.tokens", { in: msg.usage.input || 0, out: msg.usage.output || 0 })),
+    );
   }
 }
 
@@ -983,34 +1252,121 @@ function openStream(id) {
   });
 }
 
+/**
+ * The running totals under the composer.
+ *
+ * Context and cost are the two numbers that decide what a user does next on a
+ * phone - start a new session, or stop before the next step gets expensive - and
+ * neither is guessable from the transcript, so they are always on screen.
+ */
+let spent = { cost: 0, input: 0, output: 0, cacheRead: 0 };
+let meter = { used: 0, window: 0 };
+
+function fmtTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${Math.round(v / 1000)}k`;
+  return String(v);
+}
+
+function renderMeter() {
+  const bar = $("ctx-fill");
+  const label = $("ctx-label");
+  if (!bar || !label) return;
+  const win = meter.window || (state && state.contextWindow) || 0;
+  const used = meter.used || 0;
+  const pct = win ? Math.min(100, Math.round((used / win) * 100)) : 0;
+  bar.style.width = `${pct}%`;
+  bar.parentElement.classList.toggle("hot", pct >= 75);
+  const parts = [];
+  if (win) parts.push(t("meter.context", { pct, used: fmtTokens(used), window: fmtTokens(win) }));
+  if (spent.cacheRead) parts.push(t("meter.cached", { n: fmtTokens(spent.cacheRead) }));
+  if (spent.cost) parts.push(`$${spent.cost < 0.01 ? spent.cost.toFixed(4) : spent.cost.toFixed(3)}`);
+  label.textContent = parts.join("  \u00b7  ");
+}
+
+function resetMeter() {
+  spent = { cost: 0, input: 0, output: 0, cacheRead: 0 };
+  meter = { used: 0, window: (state && state.contextWindow) || 0 };
+  renderMeter();
+}
+
 function handleEvent(ev) {
   if (!ev || typeof ev.type !== "string") return;
   if (streaming) setStatus(BUSY()); // any event means we are connected again
   switch (ev.type) {
+    case "step":
+      // Only shown once it is far enough in to be worth knowing: a step counter
+      // that reads "1 of 40" on every message is noise.
+      if (streaming && ev.n >= 3) setStatus(t("chat.step", { n: ev.n, of: ev.of }));
+      break;
     case "text_delta":
       if (!streaming) setStreaming(true); // e.g. page reloaded mid-turn
-      appendDelta(ev.text || "");
+      appendDelta(ev.text || "", ev);
       break;
+    case "reasoning_delta":
+      if (!streaming) setStreaming(true);
+      if (!ev.subagent) appendReasoning(ev.text || "");
+      break;
+    case "assistant_end": {
+      // One assistant message ended. Close the open text block so the next one
+      // starts fresh, and collapse the thinking now that the answer has landed.
+      const cur = turn;
+      if (cur) {
+        flushRender();
+        if (cur.reasoning) cur.reasoning.block.open = false;
+        cur.text = null;
+      }
+      break;
+    }
     case "tool_start": {
       if (!streaming) setStreaming(true);
-      const t = ensureTurn();
-      t.tools.set(String(ev.id), toolRow(t.body, ev.name, ev.input));
-      t.text = null; // following text starts a new block, keeping stream order
+      const cur = ensureTurn();
+      const sub = ev.subagent ? cur.subs.get(String(ev.subagent)) : null;
+      const handle = toolRow(hostFor(ev), ev.name, ev.input);
+      (sub ? sub.tools : cur.tools).set(String(ev.id), handle);
+      (sub || cur).text = null; // following text starts a new block, keeping stream order
       scrollToBottom();
       break;
     }
     case "tool_end": {
-      const t = ensureTurn();
-      let handle = t.tools.get(String(ev.id));
+      const cur = ensureTurn();
+      const sub = ev.subagent ? cur.subs.get(String(ev.subagent)) : null;
+      const bag = sub ? sub.tools : cur.tools;
+      let handle = bag.get(String(ev.id));
       if (!handle) {
-        handle = toolRow(t.body, ev.name, ev.input); // tool_start missed
-        t.tools.set(String(ev.id), handle);
-        t.text = null;
+        handle = toolRow(hostFor(ev), ev.name, ev.input); // tool_start missed
+        bag.set(String(ev.id), handle);
+        (sub || cur).text = null;
       }
       finishToolRow(handle, ev.ok !== false, ev.output);
       scrollToBottom();
       break;
     }
+    case "subagent_start":
+      if (!streaming) setStreaming(true);
+      subagentBlock(ev);
+      break;
+    case "subagent_end": {
+      const cur = ensureTurn();
+      const sub = cur.subs.get(String(ev.id));
+      if (sub) {
+        sub.badge.textContent = ev.ok ? t("tool.ok") : t("tool.error");
+        sub.badge.classList.add(ev.ok ? "ok" : "bad");
+        if (!ev.ok) sub.block.classList.add("bad");
+        // Its conclusion comes back as the parent's tool result, so the working
+        // out has done its job and can get out of the way.
+        sub.block.open = false;
+      }
+      cur.text = null;
+      break;
+    }
+    case "compacting":
+      noteLine(t("chat.compacting"), "info", ev);
+      break;
+    case "compacted":
+      noteLine(t("chat.compacted", { before: fmtTokens(ev.before), after: fmtTokens(ev.after) }), "info", ev);
+      break;
     case "approval_request":
       approvalCard(ev);
       break;
@@ -1021,7 +1377,7 @@ function handleEvent(ev) {
       break;
     }
     case "tool_note":
-      noteLine(ev.text || "");
+      noteLine(ev.text || "", "warn", ev);
       break;
     case "todo":
       renderTodo(ev.items || []);
@@ -1034,9 +1390,20 @@ function handleEvent(ev) {
         if (s && s.title !== ev.title) { s.title = ev.title; fillSessionSelect(); }
       }
       break;
-    case "usage":
-      footerOf(ensureTurn()).textContent = t("chat.tokens", { in: ev.input ?? 0, out: ev.output ?? 0 });
+    case "usage": {
+      spent.input += ev.input || 0;
+      spent.output += ev.output || 0;
+      spent.cacheRead += ev.cacheRead || 0;
+      if (typeof ev.cost === "number") spent.cost += ev.cost;
+      if (ev.contextWindow) meter.window = ev.contextWindow;
+      if (ev.contextUsed) meter.used = ev.contextUsed;
+      renderMeter();
+      const bits = [t("chat.tokens", { in: ev.input ?? 0, out: ev.output ?? 0 })];
+      if (ev.cacheRead) bits.push(t("chat.cacheHit", { n: fmtTokens(ev.cacheRead) }));
+      if (typeof ev.cost === "number" && ev.cost > 0) bits.push(`$${ev.cost.toFixed(4)}`);
+      footerOf(ensureTurn()).textContent = bits.join(" \u00b7 ");
       break;
+    }
     case "done": {
       const odd = ev.stopReason && !["end_turn", "stop", "done"].includes(ev.stopReason);
       if (turn && odd) {
@@ -1055,6 +1422,14 @@ function handleEvent(ev) {
       turn = null;
       setStreaming(false);
       errorBubble(ev.message);
+      break;
+    // ---- the package-install stream (POST /api/capabilities/install) ---------
+    // Not SSE and not part of a turn, but the same shape, and the Power panel
+    // reads them through its own reader. Named here so a new event type cannot be
+    // added on the server without something in the UI acknowledging it.
+    case "start":
+    case "log":
+    case "item_done":
       break;
   }
 }
@@ -1089,10 +1464,21 @@ async function selectSession(id) {
   approvals.clear();
   setStreaming(false);
   messagesEl().textContent = "";
+  resetMeter();
   const data = await api(`/api/sessions/${encodeURIComponent(id)}`);
   const messages = (data && data.messages) || [];
-  for (const m of messages) renderStoredMessage(m);
-  if (!messages.length) {
+  let shown = 0;
+  for (const [i, m] of messages.entries()) {
+    if (m.role === "tool") continue; // drawn with the assistant message that called it
+    const next = messages[i + 1];
+    const results =
+      next && next.role === "tool"
+        ? new Map((next.results || []).map((r) => [String(r.id), r]))
+        : null;
+    renderStoredMessage(m, results);
+    shown++;
+  }
+  if (!shown) {
     messagesEl().appendChild(el("p", "empty muted", t("chat.empty")));
   }
   openStream(id);
@@ -1143,7 +1529,13 @@ async function send() {
   scrollToBottom(true);
   setStreaming(true); // the reply itself arrives over SSE
   try {
-    await api(`/api/sessions/${encodeURIComponent(sessionId)}/message`, { method: "POST", body: { text } });
+    // The mode goes with the message rather than being read from the config on
+    // the server: the toggle and Send are one gesture, and a config write that
+    // has not landed yet must not decide whether the agent can edit files.
+    await api(`/api/sessions/${encodeURIComponent(sessionId)}/message`, {
+      method: "POST",
+      body: { text, mode },
+    });
   } catch (err) {
     setStreaming(false);
     if (err.message !== "Unauthorized") errorBubble(err.message);
@@ -2437,23 +2829,45 @@ function installProgressCard(items) {
 
 /* ------------------------------------------------------------- state / boot */
 
+/**
+ * Flip between build and plan.
+ *
+ * Persisted so it survives a reload - a user who put the agent in plan mode
+ * because it is pointed at something they care about must not find it back in
+ * build mode after Android killed the tab.
+ * @param {"build"|"plan"} next
+ * @param {boolean} [persist]
+ */
+function setMode(next, persist = true) {
+  mode = next === "plan" ? "plan" : "build";
+  const btn = $("btn-mode");
+  if (btn) {
+    btn.dataset.mode = mode;
+    btn.textContent = mode === "plan" ? t("mode.plan") : t("mode.build");
+    btn.setAttribute("aria-label", t(mode === "plan" ? "mode.plan.aria" : "mode.build.aria"));
+    btn.setAttribute("aria-pressed", String(mode === "plan"));
+  }
+  document.body.classList.toggle("plan-mode", mode === "plan");
+  if (persist) api("/api/mode", { method: "POST", body: { mode } }).catch(() => {});
+}
+
 async function refreshState() {
   state = await api("/api/state");
   const bits = [state.active, state.model].filter(Boolean).join(" \u00b7 ");
   $("chat-meta").textContent = state.workspace ? `${bits} \u2014 ${state.workspace}` : bits;
   const warn = $("provider-warning");
   warn.hidden = Boolean(state.providerReady);
-  warn.textContent = state.providerReady ? "" : "No usable API key for the active provider. Open Settings.";
+  warn.textContent = state.providerReady ? "" : t("chat.noKey");
   $("cfg-path").textContent = state.configPath || "unknown";
   $("version-line").textContent = `tca ${state.version || ""}`.trim();
+  if (state.contextWindow && !meter.window) meter.window = state.contextWindow;
+  setMode(state.mode === "plan" ? "plan" : "build", false);
+  renderMeter();
 
   // Shared storage is world-readable to any app with "All files access".
   const shared = $("shared-storage-note");
   shared.hidden = !state.configInSharedStorage;
-  shared.textContent = state.configInSharedStorage
-    ? "This file is on shared storage, so any app with \u201cAll files access\u201d can read it. " +
-      "Write the key as ${VAR_NAME} to read it from the environment instead of storing it here."
-    : "";
+  shared.textContent = state.configInSharedStorage ? t("settings.sharedWarning") : "";
 
   renderCatalogInfo();
   return state;
@@ -2515,6 +2929,7 @@ function wire() {
   });
   $("composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
   $("btn-stop").addEventListener("click", abort);
+  $("btn-mode").addEventListener("click", () => setMode(mode === "plan" ? "build" : "plan"));
 
   // ---- settings
   $("settings-form").addEventListener("submit", (e) => { e.preventDefault(); saveSettings(); });

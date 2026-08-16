@@ -332,6 +332,18 @@
           <button id="jump-latest" class="jump" type="button" hidden data-i18n="chat.jumpLatest">
             Jump to latest
           </button>
+
+          <!--
+            Context and cost live above the composer rather than in a menu. They
+            are the two numbers that decide what the user does next - keep going,
+            or start a new session before the next step gets expensive - and
+            neither can be worked out from the transcript.
+          -->
+          <div class="meter">
+            <div class="meter-track"><span id="ctx-fill" class="meter-fill"></span></div>
+            <p id="ctx-label" class="meter-label"></p>
+          </div>
+
           <div class="statusbar">
             <span
               id="activity"
@@ -356,7 +368,18 @@
               spellcheck="true"
               aria-describedby="composer-hint"
             ></textarea>
-            <button id="btn-send" class="btn primary" type="submit" data-i18n="chat.send">Send</button>
+            <div class="composer-actions">
+              <button
+                id="btn-mode"
+                class="btn mode"
+                type="button"
+                data-mode="build"
+                aria-pressed="false"
+              >
+                build
+              </button>
+              <button id="btn-send" class="btn primary" type="submit" data-i18n="chat.send">Send</button>
+            </div>
             <p id="composer-hint" class="sr-only" data-i18n="chat.composerHint">
               Enter inserts a new line. Press the Send button, or Control plus
               Enter, to send.

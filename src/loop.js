@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { stream, ProviderError } from "./provider.js";
 import { callTool, toolSpecs, pickShell } from "./tools.js";
-import { appendMessage, appendCheckpoint, agentHistory, maybeSetTitle, readTodos } from "./store.js";
+import { appendMessage, appendCheckpoint, agentHistory, maybeSetTitle, readTodos, SUMMARY_MARKER } from "./store.js";
 import { modelsFor } from "./catalog.js";
 import { clearNotification, notify, vibrate } from "./notify.js";
 import { planCompaction, summarize, repairHistory, estimateTokens, pairingErrors } from "./compact.js";
@@ -199,15 +199,19 @@ class MemoryHistory {
     /** @type {any[]} */
     this.messages = [];
     this.summary = "";
+    this.headLen = 0;
   }
   get() {
-    return this.summary
-      ? [
-          { role: "user", content: `[Earlier work, compacted:]\n\n${this.summary}` },
-          { role: "assistant", content: "Understood. Continuing." },
-          ...this.messages,
-        ]
-      : this.messages;
+    if (!this.summary) {
+      this.headLen = 0;
+      return this.messages;
+    }
+    const head = [{ role: "user", content: `${SUMMARY_MARKER}\n\n${this.summary}` }];
+    if (this.messages[0]?.role !== "assistant") {
+      head.push({ role: "assistant", content: "Understood. Continuing." });
+    }
+    this.headLen = head.length;
+    return [...head, ...this.messages];
   }
   /** @param {any} m */
   async append(m) {
@@ -215,8 +219,9 @@ class MemoryHistory {
   }
   /** @param {string} summary @param {number} through */
   async checkpoint(summary, through) {
+    const drop = this.headLen ? Math.max(0, through - this.headLen) : through;
+    this.messages = this.messages.slice(drop);
     this.summary = summary;
-    this.messages = this.messages.slice(through);
   }
 }
 
@@ -236,10 +241,10 @@ class SessionHistory {
   /** @param {string} summary @param {number} through */
   async checkpoint(summary, through) {
     // `through` counts into the array agentHistory() returned, which already had
-    // the previous summary spliced in as two messages. Convert back to a raw
-    // index so the stored checkpoint means the same thing next time.
-    const { dropped } = agentHistory(this.id);
-    const raw = dropped ? dropped + Math.max(0, through - 2) : through;
+    // the previous summary spliced in as one or two messages. Convert back to a
+    // raw file index so the stored checkpoint means the same thing next time.
+    const { dropped, head } = agentHistory(this.id);
+    const raw = head ? dropped + Math.max(0, through - head) : through;
     await appendCheckpoint(this.id, summary, raw);
   }
 }
@@ -431,14 +436,15 @@ export class Agent {
 
     this.emit({ type: "compacting", tokens, limit });
     const prefix = messages.slice(0, cut);
-    // The previous summary, if any, is the first message of a compacted history.
-    const previousSummary =
-      prefix[0]?.role === "user" && String(prefix[0].content || "").startsWith("[Earlier")
-        ? String(prefix[0].content)
-        : "";
+    // Recognise our own previous summary so the second round of compaction folds
+    // it in rather than quoting it: without this, each round wraps the last and
+    // the summary grows instead of holding steady.
+    const carried = String(prefix[0]?.content || "").startsWith(SUMMARY_MARKER);
+    const previousSummary = carried ? String(prefix[0].content).slice(SUMMARY_MARKER.length).trim() : "";
+    const head = carried ? (prefix[1]?.role === "assistant" ? 2 : 1) : 0;
     const summary = await summarize({
       provider,
-      messages: previousSummary ? prefix.slice(2) : prefix,
+      messages: prefix.slice(head),
       previousSummary,
       signal: this.controller.signal,
     });

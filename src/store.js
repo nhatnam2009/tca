@@ -117,32 +117,46 @@ export function getSession(id) {
 }
 
 /**
+ * Prefix of the synthetic message that carries a compaction summary.
+ *
+ * Exported because the loop has to recognise its own summary when it compacts a
+ * second time: the new summary is produced from the old one plus everything since,
+ * and feeding the marker text back in as if it were conversation would make each
+ * round of compaction quote the last.
+ */
+export const SUMMARY_MARKER =
+  "[Earlier part of this session, compacted to fit the context window. Treat it as established fact.]";
+
+/**
  * The history as the model should see it.
  *
- * Anything before the checkpoint is replaced by its summary, framed as a
- * completed exchange so the shape stays valid for both wire formats: a bare
- * assistant message full of summary would look like something the model just
- * said, which reads oddly and, on the Anthropic side, cannot be the first
- * message at all.
+ * Anything before the checkpoint is replaced by its summary, framed as a user
+ * message: on the Anthropic wire the first message cannot be an assistant one, and
+ * a wall of summary attributed to the assistant reads as something it just said.
+ *
+ * The "Understood" acknowledgement is added only when the kept history resumes
+ * with a user message. When the cut landed mid-turn - which it can, since a single
+ * turn is allowed to overflow the window on its own - the next message is the
+ * assistant's, and an extra assistant line before it would put two in a row.
+ * Anthropic enforces strict role alternation and rejects that.
  * @param {string} id
- * @returns {{messages: Message[], summary: string, dropped: number}}
+ * @returns {{messages: Message[], summary: string, dropped: number, head: number}}
  */
 export function agentHistory(id) {
   ensure();
   const { messages, checkpoint } = parse(id);
-  if (!checkpoint || !checkpoint.summary) return { messages, summary: "", dropped: 0 };
+  if (!checkpoint || !checkpoint.summary) return { messages, summary: "", dropped: 0, head: 0 };
   const kept = messages.slice(checkpoint.through);
+  /** @type {Message[]} */
+  const head = [{ role: "user", content: `${SUMMARY_MARKER}\n\n${checkpoint.summary}` }];
+  if (kept[0]?.role !== "assistant") {
+    head.push({ role: "assistant", content: "Understood. Continuing from there." });
+  }
   return {
-    messages: [
-      {
-        role: "user",
-        content: `[Earlier part of this session, compacted to fit the context window. Treat it as established fact.]\n\n${checkpoint.summary}`,
-      },
-      { role: "assistant", content: "Understood. Continuing from there." },
-      ...kept,
-    ],
+    messages: [...head, ...kept],
     summary: checkpoint.summary,
     dropped: checkpoint.through,
+    head: head.length,
   };
 }
 
