@@ -2,7 +2,7 @@
 # =============================================================================
 # TCA (Termux Coding Agent) - One-shot setup script
 # Chạy lệnh này trong Termux để cài đặt toàn bộ:
-#   curl -fsSL https://raw.githubusercontent.com/you/tca/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/nhatnam2009/tca/main/install.sh | bash
 # hoặc nếu copy file này vào Termux:
 #   bash install.sh
 # =============================================================================
@@ -42,6 +42,8 @@ ok "Node $(node --version) | git $(git --version | awk '{print $3}')"
 
 # ── 2. Clone hoặc pull repo ──────────────────────────────────────────────────
 TCA_DIR="$HOME/tca"
+# Đổi TCA_REPO nếu bạn fork sang chỗ khác: TCA_REPO=<url> bash install.sh
+TCA_REPO="${TCA_REPO:-https://github.com/nhatnam2009/tca.git}"
 
 step "Cài đặt TCA vào $TCA_DIR"
 if [ -f "./src/cli.js" ]; then
@@ -52,13 +54,11 @@ elif [ -d "$TCA_DIR/.git" ]; then
   warn "Thư mục $TCA_DIR đã tồn tại, tiến hành cập nhật..."
   git -C "$TCA_DIR" pull --ff-only
   ok "Đã cập nhật lên phiên bản mới nhất"
-elif [ -n "${TCA_REPO:-}" ]; then
-  git clone "$TCA_REPO" "$TCA_DIR"
-  ok "Đã clone từ $TCA_REPO"
 elif [ -f "$TCA_DIR/src/cli.js" ]; then
   ok "Đã có sẵn source tại $TCA_DIR"
 else
-  die "Không tìm thấy source code TCA.\nExport biến TCA_REPO=<url> hoặc chạy script này từ trong thư mục tca/"
+  git clone "$TCA_REPO" "$TCA_DIR"
+  ok "Đã clone từ $TCA_REPO"
 fi
 
 # ── 3. Link CLI toàn cục ─────────────────────────────────────────────────────

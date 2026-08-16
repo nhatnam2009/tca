@@ -13,20 +13,23 @@ On Termux, one command does everything (packages, the `tca` command, storage
 permission, wake lock, health check, and optionally the ADB unlocks):
 
 ```sh
-pkg install git
-git clone <this-repo> ~/tca
-cd ~/tca
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/nhatnam2009/tca/main/install.sh | bash
 ```
 
 Or the smaller, non-interactive path, which also works on a desktop:
 
 ```sh
 pkg install nodejs git
-git clone <this-repo> ~/tca
+git clone https://github.com/nhatnam2009/tca.git ~/tca
 cd ~/tca
 bash setup.sh          # deps, storage permission, workspace, health check
 node src/cli.js serve
+```
+
+Later, to update:
+
+```sh
+cd ~/tca && git pull
 ```
 
 Both leave you with two commands: `tca` (the full CLI) and `nhatnam` (no
