@@ -53,7 +53,7 @@ switch (command) {
     await cmdServe(rest);
     break;
   case "run":
-    await cmdRun(rest.join(" "));
+    await cmdRun(rest);
     break;
   case "token":
     cmdToken();
@@ -89,7 +89,7 @@ function usage() {
   console.log(`tca - coding agent with a web UI, built for Termux
 
   tca serve [--port N] [--host H]   start the daemon and print the UI URL
-  tca run "task"                    one-shot turn in the terminal
+  tca run [--plan] "task"           one-shot turn in the terminal
   tca token                         print the URL including the access token
   tca models                        recommended models worth using
   tca doctor                        check this device's setup
@@ -287,9 +287,19 @@ async function cmdPower() {
   console.log("Install any of these with one tap in the web UI: tca serve -> Power tab\n");
 }
 
-async function cmdRun(text) {
+/**
+ * One turn in the terminal.
+ *
+ * Shows the same things the web UI shows, because the two drifting apart is how a
+ * feature ends up existing but being invisible from the terminal: nested
+ * sub-agents, thinking, compaction and what the turn cost.
+ * @param {string[]} argv
+ */
+async function cmdRun(argv) {
+  const plan = argv.includes("--plan");
+  const text = argv.filter((a) => a !== "--plan").join(" ");
   if (!text.trim()) {
-    console.error('usage: tca run "what you want done"');
+    console.error('usage: tca run [--plan] "what you want done"');
     process.exit(1);
   }
   const { config } = loadConfig();
@@ -297,31 +307,67 @@ async function cmdRun(text) {
     console.error("No provider configured. Run `tca serve` and open Settings, or `tca models` for suggestions.");
     process.exit(1);
   }
+  if (plan) config.mode = "plan";
 
   const { id } = createSession();
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   let streaming = false;
+  let thinking = false;
+  let spend = 0;
+
+  /** Close whatever partial line is on screen before printing a structural line. */
+  const breakLine = () => {
+    if (streaming || thinking) process.stdout.write("\n");
+    streaming = false;
+    thinking = false;
+  };
+  /** Sub-agent output is indented so the nesting is visible without colour. */
+  const indent = (ev) => (ev.subagent ? "    " : "  ");
+
+  if (plan) console.log(C.yellow("plan mode: read-only, no file changes\n"));
 
   const runner = new Runner({
     sessionId: id,
     config,
     emit: (ev) => {
       if (ev.type === "text_delta") {
+        if (thinking) breakLine();
         process.stdout.write(ev.text);
         streaming = true;
+      } else if (ev.type === "reasoning_delta") {
+        // Dimmed, not hidden. When an agent goes wrong the thinking is usually
+        // where you can see why, and in a terminal there is nothing to expand.
+        if (!thinking) breakLine();
+        process.stdout.write(C.dim(ev.text));
+        thinking = true;
       } else if (ev.type === "tool_start") {
-        if (streaming) process.stdout.write("\n");
-        streaming = false;
-        process.stdout.write(`  > ${ev.name} ${summarize(ev.input)}\n`);
+        breakLine();
+        process.stdout.write(`${indent(ev)}${C.cyan(">")} ${ev.name} ${C.dim(summarize(ev.input))}\n`);
       } else if (ev.type === "tool_end") {
         const first = (ev.output || "").split("\n")[0].slice(0, 100);
-        process.stdout.write(`  ${ev.ok ? "<" : "x"} ${first}\n`);
-      } else if (ev.type === "approval_request") {
-        // handled below via the approve override
+        const mark = ev.ok ? C.green("<") : C.red("x");
+        process.stdout.write(`${indent(ev)}${mark} ${first}\n`);
+      } else if (ev.type === "subagent_start") {
+        breakLine();
+        process.stdout.write(`  ${C.cyan("+")} sub-agent (${ev.kind})\n`);
+      } else if (ev.type === "subagent_end") {
+        // A sub-agent's last words are streamed text with no trailing newline, so
+        // without this its answer and this line end up on the same row.
+        breakLine();
+        process.stdout.write(`  ${ev.ok ? C.green("+") : C.red("+")} sub-agent done\n`);
+      } else if (ev.type === "compacting") {
+        breakLine();
+        process.stdout.write(C.dim("  summarising the older part of this session to fit the context window\n"));
+      } else if (ev.type === "tool_note") {
+        breakLine();
+        process.stdout.write(`  ${C.yellow("!")} ${ev.text}\n`);
+      } else if (ev.type === "usage") {
+        if (typeof ev.cost === "number") spend += ev.cost;
       } else if (ev.type === "error") {
-        process.stderr.write(`\nerror: ${ev.message}\n`);
+        breakLine();
+        process.stderr.write(`${C.red("error")}: ${ev.message}\n`);
       } else if (ev.type === "done") {
-        process.stdout.write("\n");
+        breakLine();
       }
     },
   });
@@ -329,14 +375,15 @@ async function cmdRun(text) {
   // Terminal approval instead of the web card.
   runner.approve = async ({ command, cwd, reason, kind = "command" }) => {
     const verb = kind === "edit" ? "allow this file change?" : "run this?";
-    process.stdout.write(`\n  ${verb} ${command}\n  ${reason} (in ${cwd})\n`);
+    process.stdout.write(`\n  ${C.yellow(verb)} ${command}\n  ${C.dim(`${reason} (in ${cwd})`)}\n`);
     const answer = (await rl.question("  [y/N] ")).trim().toLowerCase();
     return answer === "y" || answer === "yes";
   };
 
   await runner.run(text);
   rl.close();
-  console.log(`\nsession: ${id}`);
+  const cost = spend > 0 ? `  ${C.dim(`$${spend < 0.01 ? spend.toFixed(4) : spend.toFixed(3)}`)}` : "";
+  console.log(`\n${C.dim(`session: ${id}`)}${cost}`);
 }
 
 function summarize(input) {

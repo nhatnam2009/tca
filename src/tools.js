@@ -1032,10 +1032,13 @@ export function toolSpecs(opts = {}) {
   const readOnly = mode === "plan" || kind === "explore";
   return Object.entries(TOOLS)
     .filter(([name]) => {
-      if (readOnly && !READ_ONLY.has(name) && name !== "run_command") return false;
       // Only the top-level agent delegates. Letting sub-agents spawn sub-agents
       // is how one tap turns into an unbounded fan-out of paid API calls.
-      if (name === "task" && kind !== "root") return false;
+      if (name === "task") return kind === "root";
+      // Plan mode keeps `task` above, because investigating a codebase is exactly
+      // what plan mode is for and an explore sub-agent is read-only anyway. The
+      // tool itself refuses a writing sub-agent in this mode.
+      if (readOnly && !READ_ONLY.has(name) && name !== "run_command") return false;
       return true;
     })
     .map(([, t]) => t.spec);

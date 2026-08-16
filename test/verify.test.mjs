@@ -143,6 +143,10 @@ test("plan mode withholds every file-writing tool but keeps git usable", () => {
   assert.ok(plan.includes("run_command"));
   assert.ok(plan.includes("read_file"));
   assert.ok(plan.includes("grep"));
+  // Investigating a codebase is exactly what plan mode is for, so delegation has
+  // to survive it. An explore sub-agent is read-only, and the task tool refuses a
+  // writing one in this mode.
+  assert.ok(plan.includes("task"), "plan mode is when you most want to delegate reading");
 });
 
 test("an explore sub-agent is read-only and cannot spawn more sub-agents", () => {

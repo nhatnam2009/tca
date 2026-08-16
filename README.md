@@ -82,7 +82,7 @@ cd ~/tca && git pull
 
 ```
 tca serve            start the daemon and web UI
-tca run "task"       one-shot turn in the terminal, no browser
+tca run [--plan] "task"  one-shot turn in the terminal, no browser
 tca token            reprint the URL with the token
 tca models           the recommended model shortlist
 tca doctor           check this device's setup
