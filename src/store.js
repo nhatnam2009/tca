@@ -8,6 +8,10 @@
  *
  * Chat history stays in private storage, never on /sdcard: it contains whatever
  * the agent read out of your source files.
+ *
+ * Two kinds of read:
+ *   getSession()      everything, for the UI - the user gets to scroll back.
+ *   agentHistory()    what the model sees, with compaction checkpoints applied.
  */
 
 import fs from "node:fs";
@@ -30,9 +34,10 @@ const TODO_DIR = path.join(STATE_DIR, "todos");
  * @typedef {object} Message
  * @property {"user"|"assistant"|"tool"} role
  * @property {string} [content]
+ * @property {string} [reasoning]        thinking text, kept out of the visible body
  * @property {ToolCallRecord[]} [toolCalls]
  * @property {Array<{id: string, name: string, output: string, ok: boolean}>} [results]
- * @property {{input: number, output: number}} [usage]
+ * @property {{input: number, output: number, cacheRead?: number, cacheWrite?: number}} [usage]
  * @property {number} [at]
  */
 
@@ -54,13 +59,33 @@ export function createSession() {
   return { id };
 }
 
+/**
+ * Parsed sessions, keyed by id.
+ *
+ * The agent loop asks for the history once per step, and a 40-step turn with
+ * large tool outputs used to mean 40 full reads and 40 full JSON.parse passes of
+ * a file that only grows - quadratic work on a phone's flash for a file we wrote
+ * ourselves. Cached on file size: this process is the only writer, and a size
+ * change is enough to catch an external edit, at the cost of one stat().
+ * @type {Map<string, {size: number, meta: any, messages: Message[], checkpoint: {summary: string, through: number} | null}>}
+ */
+const cache = new Map();
+
 /** Parse a session file, tolerating a truncated final line. */
 function parse(id) {
-  const raw = fs.readFileSync(file(id), "utf8");
+  const f = file(id);
+  const stat = fs.statSync(f);
+  const hit = cache.get(id);
+  if (hit && hit.size === stat.size) return hit;
+
+  const raw = fs.readFileSync(f, "utf8");
   const lines = raw.split("\n").filter(Boolean);
   let meta = { type: "meta", id, title: "New session", createdAt: 0 };
   /** @type {Message[]} */
   const messages = [];
+  /** @type {{summary: string, through: number} | null} */
+  let checkpoint = null;
+
   for (const [i, line] of lines.entries()) {
     let rec;
     try {
@@ -71,9 +96,16 @@ function parse(id) {
     }
     if (rec.type === "meta") meta = { ...meta, ...rec };
     else if (rec.type === "title") meta.title = rec.title;
-    else messages.push(rec);
+    else if (rec.type === "checkpoint") {
+      // A later checkpoint always supersedes an earlier one: it was produced from
+      // the earlier summary plus everything since.
+      checkpoint = { summary: String(rec.summary || ""), through: Number(rec.through) || 0 };
+    } else messages.push(rec);
   }
-  return { meta, messages };
+
+  const entry = { size: stat.size, meta, messages, checkpoint };
+  cache.set(id, entry);
+  return entry;
 }
 
 /** @returns {{id: string, title: string, messages: Message[]}} */
@@ -82,6 +114,36 @@ export function getSession(id) {
   if (!fs.existsSync(file(id))) throw new Error(`no such session: ${id}`);
   const { meta, messages } = parse(id);
   return { id, title: meta.title, messages };
+}
+
+/**
+ * The history as the model should see it.
+ *
+ * Anything before the checkpoint is replaced by its summary, framed as a
+ * completed exchange so the shape stays valid for both wire formats: a bare
+ * assistant message full of summary would look like something the model just
+ * said, which reads oddly and, on the Anthropic side, cannot be the first
+ * message at all.
+ * @param {string} id
+ * @returns {{messages: Message[], summary: string, dropped: number}}
+ */
+export function agentHistory(id) {
+  ensure();
+  const { messages, checkpoint } = parse(id);
+  if (!checkpoint || !checkpoint.summary) return { messages, summary: "", dropped: 0 };
+  const kept = messages.slice(checkpoint.through);
+  return {
+    messages: [
+      {
+        role: "user",
+        content: `[Earlier part of this session, compacted to fit the context window. Treat it as established fact.]\n\n${checkpoint.summary}`,
+      },
+      { role: "assistant", content: "Understood. Continuing from there." },
+      ...kept,
+    ],
+    summary: checkpoint.summary,
+    dropped: checkpoint.through,
+  };
 }
 
 /** @returns {Array<{id: string, title: string, updatedAt: number, messageCount: number}>} */
@@ -106,13 +168,41 @@ export function listSessions() {
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/** Append a record and keep the in-memory copy in step with the file. */
+async function append(id, record, apply) {
+  ensure();
+  const line = `${JSON.stringify(record)}\n`;
+  await fsp.appendFile(file(id), line);
+  const hit = cache.get(id);
+  if (hit) {
+    apply(hit);
+    hit.size += Buffer.byteLength(line);
+  }
+}
+
 /**
  * @param {string} id
  * @param {Message} message
  */
 export async function appendMessage(id, message) {
-  ensure();
-  await fsp.appendFile(file(id), `${JSON.stringify({ ...message, at: Date.now() })}\n`);
+  const record = { ...message, at: Date.now() };
+  await append(id, record, (hit) => hit.messages.push(record));
+  return record;
+}
+
+/**
+ * Record that everything before `through` has been folded into `summary`.
+ *
+ * Append-only, like everything else here: the summarised messages stay in the
+ * file so the UI can still show them, and only the model's view is narrowed.
+ * @param {string} id
+ * @param {string} summary
+ * @param {number} through
+ */
+export async function appendCheckpoint(id, summary, through) {
+  await append(id, { type: "checkpoint", summary, through }, (hit) => {
+    hit.checkpoint = { summary, through };
+  });
 }
 
 /** First user message becomes the title, trimmed to something that fits a phone. */
@@ -121,12 +211,15 @@ export async function maybeSetTitle(id, text) {
   if (meta.title !== "New session") return meta.title;
   if (messages.filter((m) => m.role === "user").length > 1) return meta.title;
   const title = text.replace(/\s+/g, " ").trim().slice(0, 60) || "New session";
-  await fsp.appendFile(file(id), `${JSON.stringify({ type: "title", title })}\n`);
+  await append(id, { type: "title", title }, (hit) => {
+    hit.meta.title = title;
+  });
   return title;
 }
 
 export function deleteSession(id) {
   ensure();
+  cache.delete(id);
   fs.rmSync(file(id), { force: true });
   fs.rmSync(todoFile(id), { force: true });
 }

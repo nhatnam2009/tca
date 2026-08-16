@@ -325,8 +325,15 @@ test("the capability routes work, and the install route is a narrow door", async
   // The i18n table is reachable without a token, and holds both languages.
   const dict = await (await fetch(`http://127.0.0.1:${port}/assets/i18n.json`)).json();
   assert.deepEqual(dict.langs, ["vi", "en"]);
-  assert.ok(dict.dict.vi["tier.required"]);
-  assert.ok(dict.dict.en["tier.required"]);
+  // Driven off the payload rather than a hardcoded key, which is how this
+  // assertion went stale when the tiers were renamed: it was still checking
+  // tier.required long after the tiers became core/device/optional.
+  for (const group of caps.groups) {
+    for (const key of [group.titleKey, group.hintKey]) {
+      assert.ok(dict.dict.vi[key], `vi is missing ${key}`);
+      assert.ok(dict.dict.en[key], `en is missing ${key}`);
+    }
+  }
 });
 
 test("the shipped i18n table is the one the browser gets", () => {
@@ -382,5 +389,4 @@ test("copyRishFiles finds the export, copies both files, and says why when it ca
     else process.env.HOME = original;
     fs.rmSync(home, { recursive: true, force: true });
   }
-});
 });

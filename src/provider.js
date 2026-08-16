@@ -6,13 +6,16 @@
  *
  * Neutral messages (what loop.js and the session store use):
  *   { role: "user",      content: string }
- *   { role: "assistant", content: string, toolCalls?: [{id, name, input}] }
+ *   { role: "assistant", content: string, reasoning?: string,
+ *                        reasoningSignature?: string, toolCalls?: [{id, name, input}] }
  *   { role: "tool",      results: [{id, name, output, ok}] }
  *
  * stream() is an async generator of:
  *   { type: "text",      text }
- *   { type: "tool_call", id, name, input }     emitted once arguments are complete
- *   { type: "usage",     input, output }
+ *   { type: "reasoning", text }                 thinking, shown separately in the UI
+ *   { type: "signature", signature }            Anthropic thinking attestation
+ *   { type: "tool_call", id, name, input }      emitted once arguments are complete
+ *   { type: "usage",     input, output, cacheRead, cacheWrite }
  *   { type: "stop",      reason }
  */
 
@@ -28,8 +31,10 @@
 /**
  * Discriminated union of everything a turn can emit.
  * @typedef {{type: "text", text: string}
+ *   | {type: "reasoning", text: string}
+ *   | {type: "signature", signature: string}
  *   | {type: "tool_call", id: string, name: string, input: any}
- *   | {type: "usage", input: number, output: number}
+ *   | {type: "usage", input: number, output: number, cacheRead: number, cacheWrite: number}
  *   | {type: "stop", reason: string}} StreamEvent
  */
 
@@ -149,7 +154,24 @@ function describe(status, body) {
 
 // ---------------------------------------------------------------- request body
 
+/**
+ * Where to put prompt-cache breakpoints.
+ *
+ * Anthropic allows four. One goes on the tool list and one on the system prompt,
+ * which together are the largest fixed prefix and change only when the workspace
+ * or AGENTS.md changes. The remaining two go on the last two user turns, which is
+ * what makes the cache *roll*: the older of the two is still a prefix of the next
+ * request, so each turn re-reads the whole conversation from cache instead of
+ * paying full price for it.
+ *
+ * On a phone this is not a micro-optimisation. A 40-step turn re-sends the entire
+ * history 40 times; without caching that is quadratic spend on tokens the
+ * provider has already seen.
+ */
+const CACHE = { type: "ephemeral" };
+
 function anthropicBody({ provider, system, messages, tools }) {
+  const cache = provider.promptCache !== false;
   /** @type {any[]} */
   const out = [];
   for (const m of messages) {
@@ -158,6 +180,12 @@ function anthropicBody({ provider, system, messages, tools }) {
     } else if (m.role === "assistant") {
       /** @type {any[]} */
       const content = [];
+      // Thinking blocks must come first, and must be sent back verbatim with
+      // their signature: Anthropic rejects a tool-use continuation whose
+      // thinking is missing or unsigned once extended thinking is on.
+      if (m.reasoning && m.reasoningSignature) {
+        content.push({ type: "thinking", thinking: m.reasoning, signature: m.reasoningSignature });
+      }
       if (m.content) content.push({ type: "text", text: m.content });
       for (const c of m.toolCalls || []) {
         content.push({ type: "tool_use", id: c.id, name: c.name, input: c.input });
@@ -175,18 +203,37 @@ function anthropicBody({ provider, system, messages, tools }) {
       });
     }
   }
+
+  if (cache) {
+    // Last two user-role entries, which after the mapping above includes tool
+    // result batches - they are user-role too, and they are the bulk of a long
+    // agent conversation.
+    const userIdx = out.map((m, i) => (m.role === "user" ? i : -1)).filter((i) => i >= 0);
+    for (const i of userIdx.slice(-2)) {
+      const blocks = out[i].content;
+      if (blocks?.length) blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: CACHE };
+    }
+  }
+
+  const budget = Number(provider.thinkingBudget) || 0;
+  const maxTokens = provider.maxTokens || 8192;
+
   return {
     model: provider.model,
-    max_tokens: provider.maxTokens || 8192,
+    // max_tokens has to leave room for the thinking budget on top of the reply,
+    // or the request is rejected outright.
+    max_tokens: budget ? Math.max(maxTokens, budget + 2048) : maxTokens,
     stream: true,
-    ...(system ? { system } : {}),
+    ...(system ? { system: cache ? [{ type: "text", text: system, cache_control: CACHE }] : system } : {}),
+    ...(budget ? { thinking: { type: "enabled", budget_tokens: budget } } : {}),
     messages: out,
     ...(tools.length
       ? {
-          tools: tools.map((t) => ({
+          tools: tools.map((t, i) => ({
             name: t.name,
             description: t.description,
             input_schema: t.parameters,
+            ...(cache && i === tools.length - 1 ? { cache_control: CACHE } : {}),
           })),
         }
       : {}),
@@ -226,6 +273,9 @@ function openaiBody({ provider, system, messages, tools }) {
     stream: true,
     stream_options: { include_usage: true },
     ...(isOpenAiHost ? { max_completion_tokens: limit } : { max_tokens: limit }),
+    // Only sent when asked for: most compatible servers reject an unknown field,
+    // and the ones that support reasoning emit it without being asked anyway.
+    ...(provider.reasoningEffort ? { reasoning_effort: provider.reasoningEffort } : {}),
     messages: out,
     ...(tools.length
       ? {
@@ -272,7 +322,7 @@ async function* sseData(res) {
 async function* readAnthropic(res) {
   /** @type {Map<number, {id: string, name: string, json: string}>} */
   const blocks = new Map();
-  let usage = { input: 0, output: 0 };
+  let usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let stopReason = "end_turn";
 
   for await (const payload of sseData(res)) {
@@ -283,9 +333,13 @@ async function* readAnthropic(res) {
       continue;
     }
     switch (ev.type) {
-      case "message_start":
-        usage.input = ev.message?.usage?.input_tokens ?? 0;
+      case "message_start": {
+        const u = ev.message?.usage || {};
+        usage.input = u.input_tokens ?? 0;
+        usage.cacheRead = u.cache_read_input_tokens ?? 0;
+        usage.cacheWrite = u.cache_creation_input_tokens ?? 0;
         break;
+      }
       case "content_block_start":
         if (ev.content_block?.type === "tool_use") {
           blocks.set(ev.index, { id: ev.content_block.id, name: ev.content_block.name, json: "" });
@@ -294,6 +348,10 @@ async function* readAnthropic(res) {
       case "content_block_delta":
         if (ev.delta?.type === "text_delta") {
           yield { type: "text", text: ev.delta.text };
+        } else if (ev.delta?.type === "thinking_delta") {
+          yield { type: "reasoning", text: ev.delta.thinking || "" };
+        } else if (ev.delta?.type === "signature_delta") {
+          yield { type: "signature", signature: ev.delta.signature || "" };
         } else if (ev.delta?.type === "input_json_delta") {
           const b = blocks.get(ev.index);
           if (b) b.json += ev.delta.partial_json || "";
@@ -327,7 +385,7 @@ async function* readAnthropic(res) {
 async function* readOpenai(res) {
   /** @type {Map<number, {id: string, name: string, args: string}>} */
   const calls = new Map();
-  let usage = { input: 0, output: 0 };
+  let usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let stopReason = "stop";
 
   for await (const payload of sseData(res)) {
@@ -346,11 +404,19 @@ async function* readOpenai(res) {
       usage = {
         input: ev.usage.prompt_tokens ?? usage.input,
         output: ev.usage.completion_tokens ?? usage.output,
+        cacheRead: ev.usage.prompt_tokens_details?.cached_tokens ?? usage.cacheRead,
+        cacheWrite: usage.cacheWrite,
       };
     }
     const choice = ev.choices?.[0];
     if (!choice) continue;
     const delta = choice.delta || {};
+
+    // Reasoning models disagree about the field name: DeepSeek and Zhipu send
+    // reasoning_content, OpenRouter and a few gateways send reasoning. Neither is
+    // part of the OpenAI spec, so accept both rather than pick a side.
+    const thought = delta.reasoning_content ?? delta.reasoning;
+    if (typeof thought === "string" && thought) yield { type: "reasoning", text: thought };
 
     if (typeof delta.content === "string" && delta.content) {
       yield { type: "text", text: delta.content };

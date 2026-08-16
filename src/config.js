@@ -32,7 +32,10 @@ import os from "node:os";
  * @property {string} apiKey            raw value, or "${ENV_NAME}"
  * @property {string} model             currently selected model id
  * @property {string[]} [models]        suggestions shown in the UI picker
- * @property {number} [maxTokens]
+ * @property {number} [maxTokens]       max *output* tokens per turn, not the context window
+ * @property {boolean} [promptCache]    false disables Anthropic cache_control breakpoints
+ * @property {number} [thinkingBudget]  Anthropic extended thinking budget, 0/absent = off
+ * @property {"low"|"medium"|"high"} [reasoningEffort]  OpenAI-compatible reasoning knob
  * @property {Record<string,string>} [headers]
  */
 
@@ -43,6 +46,8 @@ import os from "node:os";
  * @property {string} workspace                     agent is confined to this dir
  * @property {boolean} autoApproveCommands
  * @property {boolean} [autoApproveEdits]           false = confirm every file write
+ * @property {"build"|"plan"} [mode]                plan mode removes every write tool
+ * @property {boolean} [verifyEdits]                run the project's checker after a write
  * @property {"vi"|"en"} [lang]                     UI + doctor language
  * @property {string[]} [denyCommands]              extra regexes, always blocked
  * @property {number} [maxSteps]
@@ -83,6 +88,14 @@ export function defaultConfig() {
     // and tapping Allow for every write on a phone makes the agent unusable.
     // Turn it off in Settings when pointing the agent at something you care about.
     autoApproveEdits: true,
+    // build writes, plan does not. Plan mode is more useful on a phone than on a
+    // desktop: you want to approve the approach before it spends forty steps of
+    // your battery on it.
+    mode: "build",
+    // After a write, run whatever checker the project already has on the file that
+    // changed and hand the errors back. This is the cheap stand-in for the LSP
+    // diagnostics a desktop agent gets, and it is most of the value.
+    verifyEdits: true,
     // Vietnamese by default: this is built for Termux users on a phone, and the
     // web UI has a switch. `tca doctor` reads it too.
     lang: "vi",

@@ -11,10 +11,13 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { run as execRun, pickShell } from "./exec.js";
 import { fdGlob, rgSearch } from "./fastsearch.js";
 import { writeTodos } from "./store.js";
 import { search as webSearch } from "./websearch.js";
+import { diagnose, formatDiagnoses } from "./diagnostics.js";
+
+export { pickShell };
 
 const MAX_OUTPUT = 60_000; // chars fed back to the model
 const MAX_FILE = 400_000;
@@ -60,10 +63,14 @@ export class ToolError extends Error {}
  * @property {string} workspace                     absolute, already created
  * @property {boolean} autoApproveCommands
  * @property {boolean} [autoApproveEdits]           false = confirm every file write
+ * @property {boolean} [verifyEdits]                false = do not run checkers after a write
+ * @property {"build"|"plan"} [mode]
  * @property {string[]} [denyCommands]              extra regex sources
  * @property {string} [sessionId]                   needed by todo_write
  * @property {(items: Array<{text: string, status: string}>) => void} [onTodo]
  * @property {(req: {command: string, cwd: string, reason: string, kind?: "command"|"edit"}) => Promise<boolean>} approve
+ * @property {(args: {prompt: string, kind: string}) => Promise<string>} [spawnAgent]  runs a sub-agent
+ * @property {(note: string) => void} [onNote]      surface something in the UI transcript
  * @property {AbortSignal} [signal]
  */
 
@@ -612,10 +619,12 @@ export const TOOLS = {
         if (re.test(command)) throw new ToolError(`blocked by safety rule ${re}: ${command}`);
       }
 
-      if (!ctx.autoApproveCommands) {
+      if (!ctx.autoApproveCommands || ctx.mode === "plan") {
         const reason = WRITES_OUTSIDE.test(command)
           ? "installs or removes packages outside the workspace"
-          : "runs a shell command";
+          : ctx.mode === "plan"
+            ? "runs a shell command, and plan mode never auto-approves one"
+            : "runs a shell command";
         const ok = await ctx.approve({ kind: "command", command, cwd: dir, reason });
         if (!ok) throw new ToolError("the user denied this command");
       }
@@ -879,34 +888,80 @@ export const TOOLS = {
       return clip(parts.map(({ p, text }) => `=== ${p} ===\n${text}`).join('\n\n'));
     },
   },
-};
 
-/**
- * Find a shell that actually exists here.
- *
- * /bin/sh is NOT a safe default on Android: Termux keeps its userland under
- * $PREFIX and the system shell is /system/bin/sh, so hardcoding /bin/sh makes
- * every run_command fail with ENOENT.
- * @returns {{ shell: string, flag: string }}
- */
-export function pickShell() {
-  if (process.platform === "win32") {
-    return { shell: process.env.COMSPEC || "cmd.exe", flag: "/c" };
-  }
-  const prefix = process.env.PREFIX || "/data/data/com.termux/files/usr";
-  const candidates = [
-    process.env.SHELL,
-    `${prefix}/bin/bash`,
-    `${prefix}/bin/sh`,
-    "/system/bin/sh", // Android without Termux userland
-    "/bin/bash",
-    "/bin/sh",
-  ];
-  for (const candidate of candidates) {
-    if (candidate && fs.existsSync(candidate)) return { shell: candidate, flag: "-c" };
-  }
-  return { shell: "/bin/sh", flag: "-c" };
-}
+  task: {
+    spec: {
+      name: "task",
+      description:
+        "Delegate a self-contained piece of work to a sub-agent and get back only its final answer. " +
+        "Use this for anything that needs to read a lot to produce a little: locating where a feature lives, " +
+        "auditing every call site of a function, working out how a subsystem fits together. " +
+        "The sub-agent has its own fresh context and its own tool budget, so twenty file reads cost you one " +
+        "summary instead of twenty file dumps - this is the main way to keep a long task from filling the " +
+        "context window. It cannot ask you questions and it shares your workspace, so state the goal completely " +
+        "and say exactly what you want back.",
+      parameters: {
+        type: "object",
+        properties: {
+          description: { type: "string", description: "Three to five words, shown in the UI." },
+          prompt: {
+            type: "string",
+            description:
+              "The full task. Include the context the sub-agent needs, what to investigate or do, and the exact shape of the answer you expect back.",
+          },
+          kind: {
+            type: "string",
+            enum: ["explore", "general"],
+            description:
+              "explore: read-only investigation, cannot write or run commands - use this by default. general: full tool access, for work that has to change files.",
+          },
+        },
+        required: ["description", "prompt"],
+      },
+    },
+    async run({ description, prompt, kind = "explore" }, ctx) {
+      if (!ctx.spawnAgent) throw new ToolError("sub-agents are not available here");
+      if (typeof prompt !== "string" || prompt.trim().length < 10) {
+        throw new ToolError("prompt must be a complete task description; the sub-agent cannot ask you for more");
+      }
+      if (kind !== "explore" && kind !== "general") throw new ToolError(`unknown kind: ${kind}`);
+      if (ctx.mode === "plan" && kind === "general") {
+        throw new ToolError("plan mode is read-only, so a general sub-agent cannot run here; use kind: explore");
+      }
+      const answer = await ctx.spawnAgent({ prompt: String(prompt), kind });
+      return clip(answer || "[the sub-agent returned nothing]");
+    },
+  },
+
+  verify: {
+    spec: {
+      name: "verify",
+      description:
+        "Run the project's own checker over the given files and report what it says. Files are checked with " +
+        "whatever the project already has: node --check, tsc --noEmit, ruff, gofmt, bash -n, a JSON parse. " +
+        "Writes already run this automatically; call it directly when you want to confirm the current state " +
+        "without changing anything.",
+      parameters: {
+        type: "object",
+        properties: {
+          paths: { type: "array", items: { type: "string" }, description: "Workspace-relative files to check." },
+        },
+        required: ["paths"],
+      },
+    },
+    async run({ paths }, ctx) {
+      if (!Array.isArray(paths) || !paths.length) throw new ToolError("paths must be a non-empty array");
+      const rels = paths.slice(0, 30).map((p) => {
+        resolveInside(ctx, String(p)); // confinement check, throws if outside
+        return String(p);
+      });
+      const found = await diagnose({ workspace: ctx.workspace, files: rels, signal: ctx.signal });
+      if (!found.length) return "No checker is available for these file types on this device.";
+      const body = formatDiagnoses(found).replace(/^\n+--- checked after this change ---\n/, "");
+      return clip(body);
+    },
+  },
+};
 
 /**
  * @param {string} command
@@ -914,76 +969,14 @@ export function pickShell() {
  * @param {number} timeout
  * @param {AbortSignal} [signal]
  */
-function exec(command, cwd, timeout, signal) {
-  return new Promise((resolve, reject) => {
-    const { shell, flag } = pickShell();
-    const child = spawn(shell, [flag, command], {
-      cwd,
-      // Detached so we can kill the whole process group: on Android an orphaned
-      // child keeps the phantom-process budget occupied until the OS reaps it.
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, TERM: "dumb", NO_COLOR: "1", CI: "1" },
-    });
-
-    let out = "";
-    let truncated = false;
-    const append = (chunk) => {
-      if (out.length > MAX_OUTPUT * 2) {
-        truncated = true;
-        return;
-      }
-      out += chunk;
-    };
-    child.stdout.on("data", (d) => append(d.toString()));
-    child.stderr.on("data", (d) => append(d.toString()));
-
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      kill(child);
-    }, timeout);
-    const onAbort = () => kill(child);
-    signal?.addEventListener("abort", onAbort, { once: true });
-
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      reject(new ToolError(`failed to start command: ${err.message}`));
-    });
-
-    child.on("close", (code, sig) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      const body = clip(out.trimEnd() || "[no output]");
-      const note = truncated ? "\n[output truncated]" : "";
-      if (timedOut) return reject(new ToolError(`timed out after ${timeout}ms\n${body}${note}`));
-      if (code === 0) return resolve(`${body}${note}`);
-      reject(new ToolError(`exit ${code ?? sig}\n${body}${note}`));
-    });
-  });
-}
-
-function kill(child) {
-  if (process.platform === "win32") {
-    child.kill("SIGKILL");
-    return;
-  }
-  try {
-    process.kill(-child.pid, "SIGTERM");
-    setTimeout(() => {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {}
-    }, 3000);
-  } catch {
-    child.kill("SIGKILL");
-  }
-}
-
-/** @returns {import("./provider.js").ToolSpec[]} */
-export function toolSpecs() {
-  return Object.values(TOOLS).map((t) => t.spec);
+async function exec(command, cwd, timeout, signal) {
+  const r = await execRun({ command, cwd, timeout, maxOutput: MAX_OUTPUT * 2, signal });
+  if (r.spawnError) throw new ToolError(`failed to start command: ${r.spawnError}`);
+  const body = clip(r.output || "[no output]");
+  const note = r.truncated ? "\n[output truncated]" : "";
+  if (r.timedOut) throw new ToolError(`timed out after ${timeout}ms\n${body}${note}`);
+  if (r.code === 0) return `${body}${note}`;
+  throw new ToolError(`exit ${r.code ?? r.signal}\n${body}${note}`);
 }
 
 /**
@@ -1005,6 +998,58 @@ const EDIT_TOOLS = {
   delete_file: (i) => ({ what: `delete_file  ${i?.path}`, reason: "deletes the file permanently" }),
 };
 
+/** Read-only tools. The complement of this is what plan mode and explore agents lose. */
+const READ_ONLY = new Set([
+  "read_file",
+  "batch_read",
+  "list_dir",
+  "tree",
+  "glob",
+  "grep",
+  "read_url",
+  "web_search",
+  "verify",
+  "todo_write",
+]);
+
+/**
+ * Which tools exist for a given agent.
+ *
+ * Three shapes rather than one, because "what may this agent do" is a safety
+ * property and the cheapest way to enforce it is to never mention the tool:
+ *
+ *   build    everything - the normal agent
+ *   plan     read-only. run_command survives because inspecting a repo needs git
+ *            log and git diff, but it can never be auto-approved in this mode.
+ *   explore  read-only and no sub-agents, so a delegated investigation cannot
+ *            recurse or quietly start writing files.
+ *
+ * @param {{mode?: "build"|"plan", kind?: "root"|"explore"|"general"}} [opts]
+ * @returns {import("./provider.js").ToolSpec[]}
+ */
+export function toolSpecs(opts = {}) {
+  const { mode = "build", kind = "root" } = opts;
+  const readOnly = mode === "plan" || kind === "explore";
+  return Object.entries(TOOLS)
+    .filter(([name]) => {
+      if (readOnly && !READ_ONLY.has(name) && name !== "run_command") return false;
+      // Only the top-level agent delegates. Letting sub-agents spawn sub-agents
+      // is how one tap turns into an unbounded fan-out of paid API calls.
+      if (name === "task" && kind !== "root") return false;
+      return true;
+    })
+    .map(([, t]) => t.spec);
+}
+
+/** Files a tool call is about to change, for the post-write check. */
+function touchedPaths(name, input) {
+  if (name === "write_file" || name === "edit_file" || name === "patch_file") {
+    return input?.path ? [String(input.path)] : [];
+  }
+  if (name === "move_file") return input?.dst ? [String(input.dst)] : [];
+  return [];
+}
+
 /**
  * Execute one tool call.
  * @param {string} name
@@ -1019,6 +1064,14 @@ export async function callTool(name, input, ctx) {
     return { ok: false, output: `could not parse your arguments as JSON: ${input.__raw?.slice(0, 200)}` };
   }
   try {
+    // Belt and braces: plan mode already withholds these specs, but a model that
+    // remembers a tool from earlier in the conversation must not be able to use it.
+    if (ctx.mode === "plan" && EDIT_TOOLS[name]) {
+      throw new ToolError(
+        `plan mode is read-only, so ${name} is not available. Describe the change you would make; ` +
+          "the user switches to build mode when they want it applied.",
+      );
+    }
     // Explicit false only: a ToolContext built without the flag (older configs,
     // direct callers) keeps the previous behaviour of not asking.
     if (ctx.autoApproveEdits === false && EDIT_TOOLS[name]) {
@@ -1026,7 +1079,20 @@ export async function callTool(name, input, ctx) {
       const ok = await ctx.approve({ kind: "edit", command: what, cwd: ctx.workspace, reason });
       if (!ok) throw new ToolError("the user denied this file change");
     }
-    return { ok: true, output: await tool.run(input || {}, ctx) };
+
+    let output = await tool.run(input || {}, ctx);
+
+    // Check what we just wrote. Appended to the tool result rather than emitted
+    // separately so the model cannot miss it: it arrives attached to the edit it
+    // is about, in the same message, whatever the model does next.
+    if (ctx.verifyEdits !== false) {
+      const files = touchedPaths(name, input);
+      if (files.length) {
+        const found = await diagnose({ workspace: ctx.workspace, files, signal: ctx.signal });
+        output += formatDiagnoses(found.filter((d) => !d.ok || found.length === 1));
+      }
+    }
+    return { ok: true, output };
   } catch (err) {
     const e = /** @type {Error} */ (err);
     // Tool failures are normal control flow: hand the message back so the model
