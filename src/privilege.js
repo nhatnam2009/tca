@@ -26,7 +26,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 
 const DEFAULT_TIMEOUT = 12_000;
 
@@ -81,6 +81,92 @@ export function hasBinary(name) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Same as run(), but hands back each output line as it arrives.
+ *
+ * `apt-get install` on a phone takes tens of seconds to minutes. Buffering all of
+ * it and returning at the end means the UI can only show a frozen spinner, which
+ * is the difference between "this is working" and "this has hung". So the output
+ * is streamed line by line and the caller decides what to show.
+ *
+ * @param {string} file
+ * @param {string[]} args
+ * @param {{timeout?: number, env?: Record<string,string>, cwd?: string, signal?: AbortSignal}} opts
+ * @param {(line: string) => void} onLine
+ * @returns {Promise<{ok: boolean, code: number|null, killed: boolean}>}
+ */
+export function runStreaming(file, args, opts, onLine) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(file, args, {
+        env: opts.env ? { ...process.env, ...opts.env } : process.env,
+        cwd: opts.cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      onLine(`could not start ${file}: ${/** @type {Error} */ (err).message}`);
+      resolve({ ok: false, code: null, killed: false });
+      return;
+    }
+
+    let killed = false;
+    const timer = opts.timeout
+      ? setTimeout(() => {
+          killed = true;
+          child.kill("SIGKILL");
+        }, opts.timeout)
+      : null;
+    const onAbort = () => {
+      killed = true;
+      child.kill("SIGKILL");
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+
+    // One partial-line buffer per stream: apt writes progress without a trailing
+    // newline, and splitting a chunk blindly would emit half-lines.
+    const buffers = { out: "", err: "" };
+    const feed = (key) => (chunk) => {
+      buffers[key] += chunk;
+      const lines = buffers[key].split(/\r?\n/);
+      buffers[key] = lines.pop() ?? "";
+      for (const line of lines) if (line.trim()) onLine(line);
+    };
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", feed("out"));
+    child.stderr?.on("data", feed("err"));
+
+    const finish = (code) => {
+      if (timer) clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
+      for (const key of ["out", "err"]) if (buffers[key].trim()) onLine(buffers[key]);
+      resolve({ ok: !killed && code === 0, code, killed });
+    };
+    child.on("error", (err) => {
+      onLine(err.message);
+      finish(null);
+    });
+    child.on("close", finish);
+  });
+}
+
+/**
+ * What phase of an install a line of apt output represents.
+ *
+ * apt prints hundreds of lines and almost all of them are noise to someone
+ * watching a phone. Three words - downloading, unpacking, configuring - say more
+ * than the log does, and the log is still there underneath for when it fails.
+ * @param {string} line
+ * @returns {"download"|"unpack"|"configure"|null}
+ */
+export function aptPhase(line) {
+  if (/^Get:|^Fetched\b|^Need to get\b/.test(line)) return "download";
+  if (/^(Unpacking|Preparing to unpack|Selecting previously)/.test(line)) return "unpack";
+  if (/^Setting up\b|^Processing triggers\b/.test(line)) return "configure";
+  return null;
 }
 
 /** Async version, used everywhere in this file so nothing blocks the daemon. */

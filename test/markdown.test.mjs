@@ -519,6 +519,11 @@ test("no translation is defined that nothing uses", () => {
     computed.add(`priv.${kind}.detail`);
   }
   for (const status of ["pending", "in_progress", "done"]) computed.add(`todo.status.${status}`);
+  for (const m of ["pair", "shizuku", "root", "recheck"]) {
+    computed.add(`priv.method.${m}.title`);
+    computed.add(`priv.method.${m}.desc`);
+  }
+  for (const phase of ["download", "unpack", "configure", "start"]) computed.add(`power.phase.${phase}`);
   for (const u of UNLOCKS) computed.add(u.labelKey);
 
   const unused = Object.keys(DICT.vi)
@@ -552,9 +557,7 @@ test("every class the Power panel builds has a rule in the stylesheet", () => {
     "power-group", "power-group-title", "power-item", "power-item-title", "power-item-why",
     "power-item-meta", "power-item-fix", "power-item-result", "power-ok-note", "power-log",
     "power-done", "power-done-count", "power-done-list",
-    "priv-methods", "priv-method", "priv-method-title", "priv-method-desc",
-    "priv-flow", "priv-flow-title", "priv-flow-result", "priv-back", "priv-steps",
-    "priv-step-count", "priv-step-title", "priv-field", "priv-applied", "priv-applied-list",
+    "install-progress", "install-which", "install-phase", "install-log-line",
     "todo", "todo-head", "todo-title", "todo-count", "todo-bar", "todo-bar-fill",
     "todo-list", "todo-item", "todo-mark", "todo-text",
     "power-caveat", "power-undo",
@@ -569,7 +572,7 @@ test("every class the Power panel builds has a rule in the stylesheet", () => {
 function powerPayload({ termux = true, privKind = null } = {}) {
   const item = (id, ok, extra = {}) => ({
     id,
-    tier: extra.tier || "recommended",
+    tier: extra.tier || "device",
     weight: 2,
     ok,
     detail: extra.detail || "",
@@ -605,22 +608,22 @@ function powerPayload({ termux = true, privKind = null } = {}) {
     envKeys: { names: [], label: "no keys" },
     groups: [
       {
-        tier: "required",
-        titleKey: "tier.required",
-        hintKey: "tier.required.hint",
-        title: "Required",
-        hint: "hint-required",
-        items: [item("node", true, { tier: "required", detail: "v22" }), item("provider", false, { tier: "required" })],
+        tier: "core",
+        titleKey: "tier.core",
+        hintKey: "tier.core.hint",
+        title: "Foundation",
+        hint: "hint-core",
+        items: [item("node", true, { tier: "core", detail: "v22" }), item("git", true, { tier: "core" })],
       },
       {
-        tier: "recommended",
-        titleKey: "tier.recommended",
-        hintKey: "tier.recommended.hint",
-        title: "Recommended",
-        hint: "hint-recommended",
+        tier: "device",
+        titleKey: "tier.device",
+        hintKey: "tier.device.hint",
+        title: "Needs you",
+        hint: "hint-device",
         items: [
-          item("fast_search", false, { packages: ["ripgrep"], sizeMb: 4 }),
-          item("git", true),
+          item("notifications", false, { packages: ["termux-api"], sizeMb: 1 }),
+          item("provider", false, {}),
           item("storage", null),
         ],
       },
@@ -646,58 +649,124 @@ test("the Power panel shows the score, the gaps, and folds away what works", () 
   assert.match(textOf(done[0]), /\u2713/);
 });
 
-test("an installable gap gets a button; one with its own flow does not", () => {
+test("privileges are shown read-only, and point at the terminal", () => {
+  // There used to be a four-route wizard here. It was the wrong shape: granting
+  // ADB means leaving the browser for the Android settings app, so `tca adb-setup`
+  // does it better and `tca serve` retries in the background. The panel's only job
+  // now is to say whether it worked.
+  app.renderPower(powerPayload({ termux: true, privKind: null }));
+  let root = shapeOf("power-body");
+
+  const priv = collect(root, (n) => n.class === "power-group power-priv")[0];
+  assert.ok(priv, "the privilege section should be present");
+  assert.equal(collect(priv, (n) => n.tag === "button").length, 0, "no wizard, no buttons");
+  assert.match(textOf(priv), /tca adb-setup/, "it has to say what to run");
+  assert.match(textOf(priv), new RegExp(DICT.en["priv.handledByCli"].slice(0, 30)));
+
+  // It is the one gap that silently breaks long tasks, so it sits above the
+  // capability groups rather than below a list of optional packages.
+  const sections = collect(root, (n) => n.class === "power-group" || n.class === "power-group power-priv");
+  assert.equal(sections[0].class, "power-group power-priv");
+
+  // Working: the label, and still no buttons.
+  app.renderPower(powerPayload({ termux: true, privKind: "rish" }));
+  root = shapeOf("power-body");
+  const ok = collect(root, (n) => n.class === "power-group power-priv")[0];
+  assert.match(textOf(ok), /label-rish/);
+  assert.equal(collect(ok, (n) => n.tag === "button").length, 0);
+  assert.ok(!textOf(ok).includes("tca adb-setup"), "nothing to run once it works");
+});
+
+test("the foundation group is a health line, not a row of install buttons", () => {
+  // install.sh already installed all of this. Offering to install it again, one
+  // tap at a time, was the complaint that got this redesigned.
   app.renderPower(powerPayload({ termux: true }));
   const root = shapeOf("power-body");
-  const cards = collect(root, (n) => n.class === "power-item bad");
+  const groups = collect(root, (n) => n.class === "power-group");
+  const core = groups.find((g) => textOf(g).includes("Foundation"));
+  assert.ok(core, "the foundation group should be on screen");
 
-  const withPkg = cards.find((c) => textOf(c).includes("title-fast_search"));
-  assert.ok(withPkg, "the ripgrep gap should be on screen");
-  assert.ok(collect(withPkg, (n) => n.tag === "button").length === 1, "it needs one install button");
-  assert.match(textOf(withPkg), /ripgrep/, "the package and size belong on the card");
-  assert.match(textOf(withPkg), /4 MB/);
+  assert.match(textOf(core), new RegExp(DICT.en["power.coreOk"]));
+  assert.equal(collect(core, (n) => n.tag === "button").length, 0, "intact means nothing to tap");
+  assert.ok(collect(core, (n) => n.class === "power-done").length === 1, "it folds to one line");
+});
 
-  // `provider` has no package: it must show the instruction, not a dead button.
+test("a broken foundation offers one repair, not one button per package", () => {
+  const payload = powerPayload({ termux: true });
+  const core = payload.groups.find((g) => g.tier === "core");
+  for (const id of ["fast_search", "fast_glob", "jq"]) {
+    core.items.push({
+      id,
+      tier: "core",
+      weight: 2,
+      ok: false,
+      detail: "",
+      params: {},
+      packages: [id === "fast_search" ? "ripgrep" : id],
+      sizeMb: 4,
+      installable: true,
+      titleKey: `cap.${id}.title`,
+      whyKey: `cap.${id}.why`,
+      fixKey: `cap.${id}.fix`,
+      title: `title-${id}`,
+      why: `why-${id}`,
+      fix: `fix-${id}`,
+    });
+  }
+
+  app.renderPower(payload);
+  const root = shapeOf("power-body");
+  const group = collect(root, (n) => n.class === "power-group").find((g) => textOf(g).includes("Foundation"));
+  assert.ok(group);
+
+  const buttons = collect(group, (n) => n.tag === "button");
+  assert.equal(buttons.length, 1, "three gaps, one button");
+  assert.match(textOf(buttons[0]), /3/, "the button says how many it will fix");
+  // All three names still have to be visible, so it is clear what is being repaired.
+  for (const id of ["fast_search", "fast_glob", "jq"]) {
+    assert.ok(textOf(group).includes(`title-${id}`), `${id} should be named`);
+  }
+});
+
+test("a group with several gaps gets one Install all as well as the individual ones", () => {
+  const payload = powerPayload({ termux: true });
+  const device = payload.groups.find((g) => g.tier === "device");
+  device.items.push({
+    id: "python",
+    tier: "device",
+    weight: 2,
+    ok: false,
+    detail: "",
+    params: {},
+    packages: ["python"],
+    sizeMb: 130,
+    installable: true,
+    titleKey: "cap.python.title",
+    whyKey: "cap.python.why",
+    fixKey: "cap.python.fix",
+    title: "title-python",
+    why: "why-python",
+    fix: "fix-python",
+  });
+
+  app.renderPower(payload);
+  const root = shapeOf("power-body");
+  const group = collect(root, (n) => n.class === "power-group").find((g) => textOf(g).includes("Needs you"));
+  assert.ok(group);
+
+  const batch = collect(group, (n) => n.tag === "button").filter((b) => /Install all/i.test(textOf(b)));
+  assert.equal(batch.length, 1, "two installable gaps should share one Install all");
+  // Total size goes in the label: 131 MB over mobile data is not something to
+  // discover afterwards.
+  assert.match(textOf(batch[0]), /131 MB/);
+
+  // A capability with no package still shows its instruction rather than a dead
+  // button.
+  const cards = collect(group, (n) => n.class === "power-item bad");
   const noPkg = cards.find((c) => textOf(c).includes("title-provider"));
   assert.ok(noPkg);
   assert.equal(collect(noPkg, (n) => n.tag === "button").length, 0);
   assert.match(textOf(noPkg), /fix-provider/);
-});
-
-test("with no privileged backend the panel offers all four routes, above the packages", () => {
-  app.renderPower(powerPayload({ termux: true, privKind: null }));
-  const root = shapeOf("power-body");
-
-  const methods = collect(root, (n) => n.class === "priv-method");
-  assert.equal(methods.length, 4, "recheck, pairing, Shizuku and root");
-  const labels = methods.map(textOf).join(" | ");
-  for (const key of [
-    "priv.method.recheck.title",
-    "priv.method.pair.title",
-    "priv.method.shizuku.title",
-    "priv.method.root.title",
-  ]) {
-    assert.ok(labels.includes(DICT.en[key]), `the method list is missing ${key}`);
-  }
-
-  // It is the one gap that silently breaks long tasks, so it must not sit below
-  // a list of optional packages.
-  const order = collect(root, (n) => n.class === "power-group power-priv" || n.class === "power-group");
-  assert.equal(order[0].class, "power-group power-priv", "privileges come first when missing");
-});
-
-test("with a backend already working the panel collapses to a recheck", () => {
-  app.renderPower(powerPayload({ termux: true, privKind: "rish" }));
-  const root = shapeOf("power-body");
-  assert.equal(collect(root, (n) => n.class === "priv-method").length, 0, "no method list once it works");
-  const priv = collect(root, (n) => n.class === "power-group power-priv")[0];
-  assert.ok(priv, "the privilege section should still be present");
-  assert.match(textOf(priv), /label-rish/);
-  assert.match(textOf(priv), new RegExp(DICT.en["common.recheck"]));
-
-  // And it must be last: nothing to do there any more.
-  const groups = collect(root, (n) => n.class === "power-group" || n.class === "power-group power-priv");
-  assert.equal(groups[groups.length - 1].class, "power-group power-priv");
 });
 
 test("off Termux the panel says so and shows no privilege section", () => {

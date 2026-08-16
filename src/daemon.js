@@ -22,18 +22,11 @@ import { Runner } from "./loop.js";
 import { getStatus } from "./status.js";
 import { getCapabilities, packagesFor } from "./capabilities.js";
 import {
-  adbConnect,
-  adbPair,
-  applyUnlocks,
-  copyRishFiles,
-  detectBackend,
-  hasBinary,
-  installAdb,
+  aptPhase,
   installBootScript,
   invalidateBackendCache,
-  readPhantomLimit,
   removeBootScript,
-  run as runProcess,
+  runStreaming,
 } from "./privilege.js";
 import { DICT, LANGS, DEFAULT_LANG } from "./i18n.js";
 
@@ -210,66 +203,10 @@ export async function serve(opts = {}) {
 
     if (method === "POST" && pathname === "/api/capabilities/install") {
       const body = await readJson(req);
-      return installCapability(res, String(body.id || ""));
-    }
-
-    if (method === "GET" && pathname === "/api/privilege") {
-      const backend = await detectBackend();
-      return json(res, 200, { ...backend, phantomLimit: await readPhantomLimit() });
-    }
-
-    if (method === "POST" && pathname === "/api/privilege/recheck") {
-      invalidateBackendCache();
-      const backend = await detectBackend();
-      // Finding a backend is only useful if the unlocks are actually on, and
-      // they are lost on reboot, so re-apply as part of every recheck.
-      const applied = backend.kind ? await applyUnlocks(backend.kind) : { kind: null, applied: [], ok: false };
-      return json(res, 200, { ...backend, applied: applied.applied, appliedOk: applied.ok });
-    }
-
-    // Shizuku exports `rish` and `rish_shizuku.dex` into Download; this saves the
-    // user typing a cp command with a glob in it.
-    if (method === "POST" && pathname === "/api/privilege/copy-rish") {
-      const r = copyRishFiles();
-      if (!r.ok) return json(res, 400, r);
-      const backend = await detectBackend();
-      return json(res, 200, { ...r, kind: backend.kind, rish: backend.rish });
-    }
-
-    if (method === "POST" && pathname === "/api/privilege/install-adb") {
-      if (installBusy) return json(res, 409, { error: "another install is running" });
-      installBusy = true;
-      try {
-        const r = await installAdb();
-        invalidateBackendCache();
-        return json(res, r.ok ? 200 : 500, {
-          ok: r.ok,
-          installed: hasBinary("adb"),
-          output: `${r.out}\n${r.err}`.trim().slice(0, 4000),
-        });
-      } finally {
-        installBusy = false;
-      }
-    }
-
-    if (method === "POST" && pathname === "/api/privilege/pair") {
-      const body = await readJson(req);
-      const r = await adbPair(body.address, body.code);
-      return json(res, r.ok ? 200 : 400, r);
-    }
-
-    if (method === "POST" && pathname === "/api/privilege/connect") {
-      const body = await readJson(req);
-      const r = await adbConnect(body.address);
-      if (!r.ok) return json(res, 400, r);
-      const applied = await applyUnlocks("adb");
-      return json(res, 200, { ...r, applied: applied.applied, appliedOk: applied.ok });
-    }
-
-    if (method === "POST" && pathname === "/api/privilege/apply") {
-      const applied = await applyUnlocks();
-      if (!applied.kind) return json(res, 400, { ok: false, errKey: "priv.err.no_backend" });
-      return json(res, 200, { ok: applied.ok, kind: applied.kind, applied: applied.applied });
+      // Accepts a batch, because installing five things one tap at a time is a
+      // bad way to spend a first run. A single id still works.
+      const ids = Array.isArray(body.ids) ? body.ids : body.id ? [body.id] : [];
+      return installCapabilities(res, ids.map((x) => String(x)));
     }
 
     // Start on boot. We write the script; the app that runs it is a separate APK
@@ -394,11 +331,11 @@ export async function serve(opts = {}) {
   }
 
   /**
-   * Install the packages behind one capability.
+   * Install the packages behind one or more capabilities, streaming progress.
    *
    * This is the only place where something a browser sent reaches a process
    * spawn, so it is deliberately narrow:
-   *   - the body carries a capability id, never a package name, and the id is
+   *   - the body carries capability ids, never package names, and each id is
    *     looked up in the fixed table in capabilities.js;
    *   - apt is invoked with an argv array, never through a shell, so no
    *     metacharacter in any input could matter even if one got this far;
@@ -406,35 +343,72 @@ export async function serve(opts = {}) {
    *     terminal here: a dpkg conffile prompt would hang the request forever;
    *   - one install at a time, since dpkg holds a lock anyway and two concurrent
    *     taps would just produce a confusing failure.
+   *
+   * The response is newline-delimited JSON rather than one object at the end.
+   * apt takes tens of seconds to minutes on a phone, and a request that returns
+   * nothing until it finishes leaves the UI with no way to show anything but a
+   * frozen spinner - which looks identical to being hung.
    */
-  async function installCapability(res, id) {
+  async function installCapabilities(res, ids) {
     if (!process.env.TERMUX_VERSION) {
       return json(res, 400, { error: "package installs are only supported under Termux" });
     }
-    const packages = packagesFor(id);
-    if (!packages) return json(res, 404, { error: `nothing installable for capability: ${id}` });
+
+    const wanted = [];
+    for (const id of ids) {
+      const packages = packagesFor(id);
+      if (!packages) return json(res, 404, { error: `nothing installable for capability: ${id}` });
+      wanted.push({ id, packages });
+    }
+    if (!wanted.length) return json(res, 400, { error: "no capability ids given" });
     if (installBusy) return json(res, 409, { error: "another install is running" });
 
     installBusy = true;
+    res.writeHead(200, {
+      "content-type": "application/x-ndjson; charset=utf-8",
+      "cache-control": "no-store",
+      // Without this Android's proxy layer can sit on the body until the request
+      // ends, which is exactly what streaming is meant to avoid.
+      "x-accel-buffering": "no",
+    });
+    const send = (event) => res.write(`${JSON.stringify(event)}\n`);
+
     try {
-      const r = await runProcess(
-        "apt-get",
-        ["install", "-y", "-o", "Dpkg::Options::=--force-confold", "-o", "Dpkg::Options::=--force-confdef", ...packages],
-        { timeout: 20 * 60_000, env: { DEBIAN_FRONTEND: "noninteractive" } },
-      );
-      invalidateBackendCache();
       const { config } = loadConfig();
+      const done = [];
+      const failed = [];
+
+      for (const [index, entry] of wanted.entries()) {
+        send({ type: "start", id: entry.id, packages: entry.packages, index, total: wanted.length });
+        const result = await runStreaming(
+          "apt-get",
+          [
+            "install",
+            "-y",
+            "-o",
+            "Dpkg::Options::=--force-confold",
+            "-o",
+            "Dpkg::Options::=--force-confdef",
+            ...entry.packages,
+          ],
+          { timeout: 20 * 60_000, env: { DEBIAN_FRONTEND: "noninteractive" } },
+          (line) => send({ type: "log", id: entry.id, line: line.slice(0, 500), phase: aptPhase(line) }),
+        );
+        (result.ok ? done : failed).push(entry.id);
+        send({ type: "item_done", id: entry.id, ok: result.ok, index, total: wanted.length });
+        // A failed package usually means the whole batch will fail the same way
+        // (no space, no network, dpkg lock), so stop rather than grind through it.
+        if (!result.ok) break;
+      }
+
+      invalidateBackendCache();
       const caps = await getCapabilities(config.lang);
-      const item = caps.groups.flatMap((g) => g.items).find((i) => i.id === id) || null;
-      return json(res, r.ok ? 200 : 500, {
-        ok: r.ok,
-        id,
-        packages,
-        item,
-        output: `${r.out}\n${r.err}`.trim().slice(0, 8000),
-      });
+      send({ type: "done", ok: failed.length === 0, installed: done, failed, capabilities: caps });
+    } catch (err) {
+      send({ type: "done", ok: false, error: `${/** @type {Error} */ (err).name}: ${/** @type {Error} */ (err).message}` });
     } finally {
       installBusy = false;
+      res.end();
     }
   }
 

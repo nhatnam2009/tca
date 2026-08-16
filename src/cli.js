@@ -26,6 +26,7 @@ import {
   adbConnect,
   adbPair,
   applyUnlocks,
+  copyRishFiles,
   detectBackend,
   hasBinary,
   installAdb,
@@ -35,6 +36,16 @@ import {
 } from "./privilege.js";
 import { t, pickLang } from "./i18n.js";
 
+/** Terminal colours. Declared here because the command switch below runs during
+ *  module evaluation, so anything it reaches has to exist by this point. */
+const C = {
+  bold: (s) => `\x1b[1m${s}\x1b[0m`,
+  green: (s) => `\x1b[32m${s}\x1b[0m`,
+  yellow: (s) => `\x1b[33m${s}\x1b[0m`,
+  red: (s) => `\x1b[31m${s}\x1b[0m`,
+  cyan: (s) => `\x1b[36m${s}\x1b[0m`,
+  dim: (s) => `\x1b[2m${s}\x1b[0m`,
+};
 const [command = "serve", ...rest] = process.argv.slice(2);
 
 switch (command) {
@@ -107,7 +118,7 @@ async function cmdServe(args) {
   if (added.length) console.log(`Found API keys in the environment for: ${added.join(", ")}\n`);
   await holdWakeLock();
   await serve({ port });
-  reapplyUnlocks(); // background, never blocks the URL from printing
+  managePrivileges(); // background, never blocks the URL from printing
 }
 
 /**
@@ -136,23 +147,63 @@ async function holdWakeLock() {
 }
 
 /**
- * Wireless ADB pairing does not survive a reboot, so the phantom process unlock
- * quietly disappears and long turns start dying again with no visible cause. If
- * any privileged backend is reachable, re-apply on every start. Silent when
- * nothing is available: this is opportunistic, not a requirement.
+ * Android privileges, handled here rather than in the browser.
+ *
+ * Every `nhatnam` looks for a privileged backend and applies the unlocks itself.
+ * That is the right place for it: the phantom process cap is what silently breaks
+ * long turns, and the fix belongs at startup, not behind a tab someone has to
+ * find and tap through.
+ *
+ * When nothing is reachable it keeps checking in the background instead of giving
+ * up. Granting ADB means going into Android settings, or opening the Shizuku app,
+ * and coming back - so the moment that happens, this notices and applies the
+ * unlocks without needing a restart.
  */
-function reapplyUnlocks() {
+const PRIVILEGE_RETRY_MS = 20_000;
+const PRIVILEGE_RETRY_FOR = 15 * 60_000;
+
+function managePrivileges() {
   if (!process.env.TERMUX_VERSION) return;
-  (async () => {
-    const backend = await detectBackend();
-    if (!backend.kind) return;
-    const res = await applyUnlocks(backend.kind);
+
+  const report = (res) => {
     const failed = res.applied.filter((a) => !a.ok).length;
     console.log(
       failed
-        ? `Privileges (${res.kind}): ${res.applied.length - failed}/${res.applied.length} applied.`
-        : `Privileges (${res.kind}): all applied.`,
+        ? `${C.yellow("[!]")}  Privileges via ${res.kind}: ${res.applied.length - failed}/${res.applied.length} applied.`
+        : `${C.green("[ok]")} Privileges via ${res.kind}: process limit lifted.`,
     );
+  };
+
+  (async () => {
+    const first = await detectBackend();
+    if (first.kind) {
+      report(await applyUnlocks(first.kind));
+      return;
+    }
+
+    console.log("");
+    console.log(`${C.yellow("[!]")}  ${C.bold("No elevated privileges yet.")}`);
+    console.log("     Android caps this app at ~32 child processes and kills the rest,");
+    console.log("     so a long task will break part way through.");
+    console.log("");
+    console.log(`     Set it up now:  ${C.bold("tca adb-setup")}   (root, Shizuku, or wireless ADB)`);
+    console.log(`     Or grant it from another Termux session - this will pick it up on its own.`);
+    console.log("");
+
+    // Poll rather than ask. The user is going to be in the Android settings app,
+    // not looking at this terminal, and a blocking prompt here would stop the
+    // daemon from starting at all.
+    const until = Date.now() + PRIVILEGE_RETRY_FOR;
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, PRIVILEGE_RETRY_MS));
+      invalidateBackendCache();
+      const again = await detectBackend();
+      if (!again.kind) continue;
+      console.log("");
+      console.log(`${C.green("[ok]")} Picked up ${again.kind} privileges - applying the unlocks now.`);
+      report(await applyUnlocks(again.kind));
+      return;
+    }
   })().catch(() => {});
 }
 
@@ -303,22 +354,17 @@ function numFlag(args, name) {
 
 // ------------------------------------------------------------- privilege setup
 
-const C = {
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-  green: (s) => `\x1b[32m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[33m${s}\x1b[0m`,
-  red: (s) => `\x1b[31m${s}\x1b[0m`,
-  cyan: (s) => `\x1b[36m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-};
-
 /**
  * Grant the agent the Android privileges it needs.
  *
- * Four ways in, and the cheapest one that works wins. Root and Shizuku need no
- * pairing at all, which the old version of this command could not take advantage
- * of because it hardcoded `adb shell`. The web UI Power tab drives the same
- * functions from privilege.js, so the two cannot diverge.
+ * This lives in the terminal and only in the terminal. It used to be mirrored by a
+ * wizard in the web UI, which was the wrong shape for it: granting ADB means
+ * leaving the browser for the Android settings app and reading a pairing code off
+ * it, so a browser wizard could only ever be a worse copy of this. `tca serve`
+ * applies whatever it finds on startup and keeps retrying in the background, so
+ * this is the one place that has to be good.
+ *
+ * Four ways in, cheapest first. Root and Shizuku need no pairing at all.
  */
 async function cmdAdbSetup() {
   if (!process.env.TERMUX_VERSION) {
@@ -329,167 +375,142 @@ async function cmdAdbSetup() {
 
   const { config } = loadConfig();
   const lang = pickLang(config.lang);
+  const T = (key, params) => t(lang, key, params);
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q) => rl.question(q);
-  const step = (n, msg) => console.log(`\n${C.bold(C.cyan(`[${n}]`))} ${C.bold(msg)}`);
+  const step = (n, total, msg) => console.log(`\n${C.bold(C.cyan(T("power.step", { n, total })))} ${C.bold(msg)}`);
   const ok = (msg) => console.log(`  ${C.green("[ok]")} ${msg}`);
   const warn = (msg) => console.log(`  ${C.yellow("[!]")}  ${msg}`);
   const info = (msg) => console.log(`       ${msg}`);
+  const bail = (msg, detail) => {
+    console.error(C.red(`  ${msg}`));
+    if (detail) info(C.dim(String(detail).slice(0, 300)));
+    rl.close();
+    process.exitCode = 1;
+  };
 
-  console.log(C.bold("\n╔══════════════════════════════════════╗"));
-  console.log(C.bold("║   TCA - Android privilege setup      ║"));
-  console.log(C.bold("╚══════════════════════════════════════╝"));
+  console.log(C.bold(`\n${T("power.privSection")}`));
 
-  const finish = async (label) => {
+  /** Apply the unlocks and report each one, then stop. */
+  const finish = async () => {
     invalidateBackendCache();
     const res = await applyUnlocks();
-    if (!res.kind) {
-      console.error(C.red(`\n${t(lang, "priv.err.no_backend")}`));
-      rl.close();
-      process.exitCode = 1;
-      return;
-    }
-    console.log(`\n${C.bold(`Applying unlocks via ${res.kind}${label ? ` (${label})` : ""}:`)}`);
+    if (!res.kind) return bail(T("priv.err.no_backend"));
+
+    console.log(`\n${C.bold(T(res.kind === "rish" ? "priv.rish.label" : `priv.${res.kind}.label`))}`);
     for (const a of res.applied) {
-      console.log(`  ${a.ok ? C.green("ok") : C.yellow("!!")}  ${t(lang, a.labelKey)}`);
+      console.log(`  ${a.ok ? C.green("ok") : C.yellow("!!")}  ${T(a.labelKey)}`);
       if (!a.ok && a.err) info(C.dim(a.err));
     }
-    console.log(
-      res.ok
-        ? C.bold(C.green("\n✓ Done. The agent can now spawn as many processes as it needs."))
-        : C.yellow("\nSome unlocks were refused. Some vendors block appops even over ADB; the important one is the first."),
-    );
-    console.log(C.dim("\nCheck any time:  tca power"));
+    const okCount = res.applied.filter((a) => a.ok).length;
+    console.log(`\n${T("power.applied", { ok: okCount, total: res.applied.length })}`);
+    console.log(res.ok ? C.bold(C.green(T("power.appliedAll"))) : C.yellow(T("power.appliedSome")));
+    console.log(C.dim("\ntca power"));
     rl.close();
   };
 
   // ---- already privileged? then there is nothing to set up ------------------
-  step(1, "Checking what is already available");
   const backend = await detectBackend();
-  console.log(`  root   ${backend.root.available ? C.green("yes") : C.dim(`no  (${backend.root.note})`)}`);
-  console.log(`  shizuku${backend.rish.available ? C.green(" yes") : C.dim(` no  (${backend.rish.note})`)}`);
+  console.log("");
+  console.log(`  root     ${backend.root.available ? C.green("yes") : C.dim(`no  (${backend.root.note})`)}`);
+  console.log(`  shizuku  ${backend.rish.available ? C.green("yes") : C.dim(`no  (${backend.rish.note})`)}`);
   console.log(
-    `  adb    ${backend.adb.connected ? C.green("connected") : C.dim(`not connected  (${backend.adb.note || "no devices"})`)}`,
+    `  adb      ${backend.adb.connected ? C.green("connected") : C.dim(`no  (${backend.adb.note || "no devices"})`)}`,
   );
 
   if (backend.kind) {
-    ok(`Already usable via ${backend.kind} - no pairing needed.`);
-    return finish(null);
+    ok(T(`priv.${backend.kind}.label`));
+    return finish();
   }
 
   // ---- choose a path -------------------------------------------------------
-  step(2, "Choose how to grant privileges");
+  console.log(`\n${C.bold(T("power.chooseMethod"))}\n`);
+  const methods = ["pair", "shizuku", "root", "recheck"];
+  for (const [i, m] of methods.entries()) {
+    console.log(`  ${i + 1}) ${C.bold(T(`priv.method.${m}.title`))}`);
+    console.log(`     ${C.dim(T(`priv.method.${m}.desc`))}`);
+  }
   console.log("");
-  console.log(`  1) ${t(lang, "priv.method.pair.title")}   ${C.dim(t(lang, "priv.method.pair.desc"))}`);
-  console.log(`  2) ${t(lang, "priv.method.shizuku.title")}          ${C.dim(t(lang, "priv.method.shizuku.desc"))}`);
-  console.log(`  3) ${t(lang, "priv.method.root.title")}       ${C.dim(t(lang, "priv.method.root.desc"))}`);
-  console.log("");
-  const choice = (await ask("  1 / 2 / 3 ? ")).trim();
+  const choice = (await ask(`  1-${methods.length} ? `)).trim();
+  const method = methods[Number(choice) - 1];
 
-  // ---- 3: root ------------------------------------------------------------
-  if (choice === "3") {
-    step(3, "Trying su");
+  // ---- just look again -----------------------------------------------------
+  if (method === "recheck") {
     invalidateBackendCache();
     const again = await detectBackend();
-    if (!again.root.available) {
-      console.error(C.red(`  ${t(lang, "priv.err.no_root")}`));
-      info(C.dim(again.root.note));
-      rl.close();
-      process.exitCode = 1;
-      return;
-    }
-    ok("su works.");
-    return finish("root");
+    if (!again.kind) return bail(T("priv.err.no_backend"));
+    return finish();
   }
 
-  // ---- 2: Shizuku ---------------------------------------------------------
-  if (choice === "2") {
-    step(3, "Shizuku");
-    info("1. Install Shizuku from F-Droid or Google Play");
-    info("2. Open it and press Start (it does its own wireless pairing, once)");
-    info('3. In Shizuku: "Use Shizuku in terminal apps" -> export the files');
-    info("4. Copy them into Termux:");
-    info(C.bold("     cp ~/storage/shared/Download/rish* ~/"));
-    info("     (accept the storage permission first if you have not: termux-setup-storage)");
+  // ---- root ----------------------------------------------------------------
+  if (method === "root") {
+    step(1, 1, T("priv.root.check"));
+    invalidateBackendCache();
+    const again = await detectBackend();
+    if (!again.root.available) return bail(T("priv.err.no_root"), again.root.note);
+    ok("su");
+    return finish();
+  }
+
+  // ---- Shizuku -------------------------------------------------------------
+  if (method === "shizuku") {
+    step(1, 2, T("priv.method.shizuku.title"));
+    for (const key of ["priv.shizuku.s1", "priv.shizuku.s2", "priv.shizuku.s3", "priv.shizuku.s4"]) {
+      info(T(key));
+    }
     console.log("");
-    await ask("  Press Enter once the files are in place... ");
+    await ask(`  [Enter] ${T("priv.shizuku.copy")} `);
 
+    // Do the copy here rather than making the user type a glob into a shell.
+    const copied = copyRishFiles();
+    if (copied.ok) ok(T("priv.shizuku.copied"));
+    else warn(T(copied.errKey || "priv.err.rish_missing"));
+
+    step(2, 2, T("priv.shizuku.check"));
     const files = rishFilesPresent();
-    if (!files.script || !files.dex) {
-      console.error(C.red(`  ${t(lang, "priv.err.rish_missing")}`));
-      info(C.dim(`rish: ${files.script ? "found" : "missing"} · rish_shizuku.dex: ${files.dex ? "found" : "missing"}`));
-      rl.close();
-      process.exitCode = 1;
-      return;
-    }
+    info(C.dim(`rish: ${files.script ? "✓" : "✗"}   rish_shizuku.dex: ${files.dex ? "✓" : "✗"}`));
+    if (!files.script || !files.dex) return bail(T("priv.err.rish_missing"));
+
     invalidateBackendCache();
     const again = await detectBackend();
-    if (!again.rish.available) {
-      console.error(C.red(`  ${t(lang, "priv.err.rish_dead")}`));
-      info(C.dim(again.rish.note));
-      rl.close();
-      process.exitCode = 1;
-      return;
-    }
-    ok("Shizuku answered as the shell user.");
-    return finish("shizuku");
+    if (!again.rish.available) return bail(T("priv.err.rish_dead"), again.rish.note);
+    ok(T("priv.rish.label"));
+    return finish();
   }
 
-  // ---- 1: wireless ADB pairing -------------------------------------------
-  step(3, "Install adb");
+  // ---- wireless ADB pairing ----------------------------------------------
+  step(1, 4, T("priv.pair.installAdb"));
   if (hasBinary("adb")) {
-    ok("android-tools already installed");
+    ok("android-tools");
   } else {
-    info("installing android-tools...");
+    info(T("common.installing"));
     const r = await installAdb();
-    if (!r.ok) {
-      console.error(C.red("  Install failed. Try: pkg install android-tools"));
-      info(C.dim(r.err.slice(0, 300)));
-      rl.close();
-      process.exitCode = 1;
-      return;
-    }
-    ok("android-tools installed");
+    if (!r.ok) return bail(T("priv.err.no_adb"), r.err);
+    ok("android-tools");
   }
 
-  step(4, "Turn on Wireless debugging");
-  info("Settings -> Developer options -> Wireless debugging -> on");
-  info('(No Developer options? Settings -> About phone -> tap "Build number" 7 times)');
+  step(2, 4, T("priv.pair.s1.title"));
+  info(T("priv.pair.s1.body"));
   console.log("");
-  await ask("  Press Enter when Wireless debugging is on... ");
+  await ask(`  [Enter] ${T("priv.pair.s1.done")} `);
 
-  step(5, "Pair");
-  info('Tap "Pair device with pairing code". It shows an IP:PORT and a 6-digit code.');
-  info("Note: this port is NOT the same as the one on the main screen.");
+  step(3, 4, T("priv.pair.s2.title"));
+  info(T("priv.pair.s2.body"));
   console.log("");
-  const pairAddr = (await ask("  Pairing IP:PORT (e.g. 192.168.1.5:38721): ")).trim();
-  const pairCode = (await ask("  6-digit code: ")).trim();
+  const pairAddr = (await ask(`  ${T("priv.pair.addrLabel")} (192.168.1.5:38721): `)).trim();
+  const pairCode = (await ask(`  ${T("priv.pair.codeLabel")}: `)).trim();
   const paired = await adbPair(pairAddr, pairCode);
-  if (!paired.ok) {
-    console.error(C.red(`  ${t(lang, paired.errKey)}`));
-    if (paired.out) info(C.dim(paired.out.slice(0, 300)));
-    rl.close();
-    process.exitCode = 1;
-    return;
-  }
-  ok("paired");
+  if (!paired.ok) return bail(T(paired.errKey), paired.out);
+  ok(T("priv.pair.paired"));
 
-  step(6, "Connect");
-  info("Go back to the main Wireless debugging screen and read the IP:PORT there.");
+  step(4, 4, T("priv.pair.s3.title"));
+  info(T("priv.pair.s3.body"));
   console.log("");
-  const connAddr = (await ask("  Connect IP:PORT: ")).trim();
+  const connAddr = (await ask(`  ${T("priv.pair.connectLabel")}: `)).trim();
   const connected = await adbConnect(connAddr);
-  if (!connected.ok) {
-    console.error(C.red(`  ${t(lang, connected.errKey)}`));
-    if (connected.out) info(C.dim(connected.out.slice(0, 300)));
-    rl.close();
-    process.exitCode = 1;
-    return;
-  }
-  ok(`connected: ${connAddr}`);
-  warn("Wireless ADB pairing is lost on reboot. `tca serve` re-applies the unlocks");
-  warn("automatically while the connection lasts; after a reboot, run this again.");
-  return finish("wireless adb");
+  if (!connected.ok) return bail(T(connected.errKey), connected.out);
+  ok(`${T("priv.pair.doConnect")}: ${connAddr}`);
+  warn(T("power.rebootWarn"));
+  return finish();
 }
-
 

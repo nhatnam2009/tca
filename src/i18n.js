@@ -23,12 +23,12 @@ export const DEFAULT_LANG = "vi";
 export const DICT = {
   vi: {
     // ---------------------------------------------------------------- tiers
-    "tier.required": "Cần thiết",
-    "tier.recommended": "Nên có",
-    "tier.advanced": "Nâng cao",
-    "tier.required.hint": "Thiếu những thứ này thì agent không chạy được.",
-    "tier.recommended.hint": "Nhẹ, và tăng sức mạnh agent rõ rệt.",
-    "tier.advanced.hint": "Nặng hơn. Chỉ cài khi bạn cần.",
+    "tier.core": "Nền tảng",
+    "tier.device": "Cần bạn làm",
+    "tier.optional": "Thêm nếu cần",
+    "tier.core.hint": "Lệnh cài đặt đã lo hết. Nếu thiếu là lần cài bị lỗi.",
+    "tier.device.hint": "Chỉ bạn làm được: hộp thoại Android, app từ F-Droid, hoặc ghép nối ADB.",
+    "tier.optional.hint": "Nặng, và thật sự là tuỳ chọn. Hỏi trước khi tải.",
 
     // ------------------------------------------------------------ chung
     "common.installed": "Đã có",
@@ -361,12 +361,28 @@ export const DICT = {
     "power.installLog": "Chi tiết",
     "power.privSection": "Quyền nâng cao",
     "power.chooseMethod": "Chọn cách cấp quyền:",
-    "power.back": "‹ Quay lại",
     "power.step": "Bước {n}/{total}",
     "power.applied": "Đã áp dụng {ok}/{total} mở khoá",
     "power.appliedAll": "Đã mở khoá xong. Agent tạo bao nhiêu tiến trình cũng được.",
     "power.appliedSome": "Một số mở khoá bị từ chối. Vài hãng chặn appops kể cả qua ADB; mục quan trọng nhất là mục đầu.",
     "power.rebootWarn": "Ghép nối ADB không dây mất sau khi khởi động lại máy. Lúc đó chạy lại phần này.",
+
+    "power.coreOk": "Nền tảng đầy đủ",
+    "power.coreOkNote": "{n} thứ đã sẵn sàng — lệnh cài đặt đã lo hết.",
+    "power.repair": "Sửa lần cài ({n})",
+    "power.repairNote":
+      "{n} thứ đáng lẽ đã được cài bởi lệnh cài đặt nhưng không có. Thường là do lần cài bị ngắt giữa đường.",
+    "power.installAll": "Cài tất cả ({n} · {mb} MB)",
+    "power.confirmSize": "Tải khoảng {mb} MB?\n\nSẽ dùng dữ liệu di động nếu bạn không ở Wi-Fi.",
+    "power.progressTitle": "Đang cài",
+    "power.progressItem": "{n}/{total} · {title}",
+    "power.phase.download": "đang tải…",
+    "power.phase.unpack": "đang giải nén…",
+    "power.phase.configure": "đang cấu hình…",
+    "power.phase.start": "đang bắt đầu…",
+    "power.installedN": "Đã cài xong {n} thứ.",
+    "power.failedAt": "Thất bại ở: {title}",
+    "power.busy": "Đang có lượt cài khác chạy — chờ nó xong.",
 
     "priv.pair.installAdb": "Cài android-tools",
     "priv.pair.s1.title": "Bật Gỡ lỗi không dây",
@@ -378,7 +394,6 @@ export const DICT = {
       "Bấm “Ghép nối thiết bị bằng mã ghép nối”. Nó hiện một địa chỉ IP:PORT và một mã 6 số. Cổng này KHÁC cổng ở màn hình chính.",
     "priv.pair.addrLabel": "IP:PORT ghép nối",
     "priv.pair.codeLabel": "Mã 6 số",
-    "priv.pair.doPair": "Ghép nối",
     "priv.pair.paired": "Ghép nối thành công.",
     "priv.pair.s3.title": "Kết nối",
     "priv.pair.s3.body": "Quay lại màn hình Gỡ lỗi không dây chính và đọc IP:PORT ở đó — cổng khác với cổng ghép nối.",
@@ -395,16 +410,18 @@ export const DICT = {
     "priv.shizuku.storageFirst": "Cần quyền bộ nhớ trước. Chạy termux-setup-storage trong Termux.",
 
     "priv.root.check": "Thử bằng su",
+    "priv.handledByCli":
+      "Mỗi lần gõ nhatnam, agent tự tìm quyền và áp dụng luôn. Nếu bạn cấp ADB ở một cửa sổ Termux khác, nó sẽ tự nhận trong vòng 20 giây — không cần khởi động lại.",
   },
 
   en: {
     // ---------------------------------------------------------------- tiers
-    "tier.required": "Required",
-    "tier.recommended": "Recommended",
-    "tier.advanced": "Advanced",
-    "tier.required.hint": "Without these the agent cannot run at all.",
-    "tier.recommended.hint": "Small downloads, large difference.",
-    "tier.advanced.hint": "Heavier. Install only if you need them.",
+    "tier.core": "Foundation",
+    "tier.device": "Needs you",
+    "tier.optional": "Add if you need it",
+    "tier.core.hint": "The install command handled all of this. A gap here means it failed.",
+    "tier.device.hint": "Only you can do these: an Android dialog, an app from F-Droid, or ADB pairing.",
+    "tier.optional.hint": "Heavy, and genuinely a choice. It asks before downloading.",
 
     // ----------------------------------------------------------- common
     "common.installed": "Installed",
@@ -740,12 +757,28 @@ export const DICT = {
     "power.installLog": "Details",
     "power.privSection": "Elevated privileges",
     "power.chooseMethod": "Choose how to grant them:",
-    "power.back": "‹ Back",
     "power.step": "Step {n} of {total}",
     "power.applied": "Applied {ok} of {total} unlocks",
     "power.appliedAll": "Unlocked. The agent can spawn as many processes as it needs.",
     "power.appliedSome": "Some unlocks were refused. Some vendors block appops even over ADB; the first one is what matters.",
     "power.rebootWarn": "Wireless ADB pairing is lost when the phone reboots. Come back here after a restart.",
+
+    "power.coreOk": "Foundation complete",
+    "power.coreOkNote": "{n} things ready — the install command handled all of it.",
+    "power.repair": "Repair the install ({n})",
+    "power.repairNote":
+      "{n} things the install command should have set up are missing. Usually that means it was interrupted.",
+    "power.installAll": "Install all ({n} · {mb} MB)",
+    "power.confirmSize": "Download about {mb} MB?\n\nIt will use mobile data if you are not on Wi-Fi.",
+    "power.progressTitle": "Installing",
+    "power.progressItem": "{n} of {total} · {title}",
+    "power.phase.download": "downloading…",
+    "power.phase.unpack": "unpacking…",
+    "power.phase.configure": "configuring…",
+    "power.phase.start": "starting…",
+    "power.installedN": "Installed {n} things.",
+    "power.failedAt": "Failed at: {title}",
+    "power.busy": "Another install is already running — wait for it to finish.",
 
     "priv.pair.installAdb": "Install android-tools",
     "priv.pair.s1.title": "Turn on Wireless debugging",
@@ -757,7 +790,6 @@ export const DICT = {
       "Tap “Pair device with pairing code”. It shows an IP:PORT and a 6-digit code. This port is NOT the one on the main screen.",
     "priv.pair.addrLabel": "Pairing IP:PORT",
     "priv.pair.codeLabel": "6-digit code",
-    "priv.pair.doPair": "Pair",
     "priv.pair.paired": "Paired.",
     "priv.pair.s3.title": "Connect",
     "priv.pair.s3.body": "Go back to the main Wireless debugging screen and read the IP:PORT there — a different port from the pairing one.",
@@ -774,6 +806,8 @@ export const DICT = {
     "priv.shizuku.storageFirst": "Storage permission is needed first. Run termux-setup-storage in Termux.",
 
     "priv.root.check": "Try su",
+    "priv.handledByCli":
+      "Every `nhatnam` looks for privileges and applies them itself. If you grant ADB from another Termux window it will pick that up within 20 seconds - no restart needed.",
   },
 };
 

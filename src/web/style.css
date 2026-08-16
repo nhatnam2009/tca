@@ -1496,118 +1496,39 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
   max-height: 40vh;
 }
 
-/* ------------------------------------------------- the privilege sub-wizard */
+/* ------------------------------------------------- installing, with progress */
 
-/* Four ways to grant Android privileges. Presented as a list of choices rather
-   than a single button, because which one is cheapest depends on the phone. */
+/* apt takes tens of seconds to minutes on a phone. A spinner that never changes
+   is indistinguishable from a hang, so this shows which item, which phase, and
+   the last line of output. */
 
-.priv-methods {
-  display: grid;
-  gap: 8px;
+.install-progress {
+  border-left-color: var(--accent);
 }
-.priv-method {
-  display: grid;
-  gap: 3px;
-  width: 100%;
-  min-height: var(--tap);
-  padding: 12px 14px;
-  text-align: left;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-3);
-  color: var(--fg);
-  font: inherit;
-  cursor: pointer;
-}
-.priv-method:hover,
-.priv-method:focus-visible {
-  border-color: var(--border-strong);
-  background: var(--bg-2);
-}
-.priv-method-title {
-  font-weight: 600;
-}
-.priv-method-desc {
-  color: var(--muted);
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
-.priv-flow {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-2);
-}
-.priv-flow p {
+.install-progress.good { border-left-color: var(--ok); }
+.install-progress.bad { border-left-color: var(--danger); }
+.install-which {
   margin: 0;
-}
-.priv-back {
-  justify-self: start;
-  padding: 0;
-  min-height: 32px;
-}
-.priv-flow-title {
-  margin: 0;
-  font-size: 1rem;
-}
-.priv-step-count {
+  font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
 }
-.priv-step-title {
-  margin: 6px 0 0;
-  font-size: 0.92rem;
-}
-.priv-steps {
+.install-phase {
   margin: 0;
-  padding-left: 22px;
-  display: grid;
-  gap: 8px;
-  font-size: 0.88rem;
-  line-height: 1.5;
+  min-height: 1.2em;
 }
-.priv-field {
-  display: grid;
-  gap: 4px;
-}
-.priv-field label {
-  font-size: 0.82rem;
+.install-log-line {
+  margin: 0;
+  min-height: 1.2em;
   color: var(--muted);
-}
-.priv-field input {
   font-family: var(--mono);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.priv-flow-result {
-  margin: 0;
+.install-progress .power-bar {
+  margin: 2px 0;
 }
-.priv-flow-result.warn {
-  color: var(--warn);
-}
-.priv-applied {
-  display: grid;
-  gap: 6px;
-  margin-top: 10px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-2);
-}
-.priv-applied p {
-  margin: 0;
-}
-.priv-applied-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 4px;
-  font-size: 0.82rem;
-}
-.priv-applied-list li.ok { color: var(--ok); }
-.priv-applied-list li.warn { color: var(--warn); }
 
 .mono {
   font-family: var(--mono);

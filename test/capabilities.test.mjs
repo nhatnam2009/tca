@@ -79,7 +79,7 @@ test("t() interpolates, falls back to English, then to the key", () => {
   // An unknown key comes back as itself instead of blank, so a bug is visible.
   assert.equal(t("vi", "no.such.key"), "no.such.key");
   // An unknown language falls back rather than throwing.
-  assert.equal(t("klingon", "tier.required"), DICT.en["tier.required"]);
+  assert.equal(t("klingon", "tier.core"), DICT.en["tier.core"]);
 });
 
 test("pickLang normalises anything", () => {
@@ -295,8 +295,25 @@ test("the capability routes work, and the install route is a narrow door", async
   const en = await (await call("/api/capabilities?lang=en")).json();
   assert.equal(en.lang, "en");
 
-  const priv = await (await call("/api/privilege")).json();
-  assert.ok("kind" in priv && "root" in priv && "adb" in priv);
+  // The privilege state rides along with the capabilities payload; there is no
+  // separate route for it any more.
+  assert.ok(caps.privilege && "kind" in caps.privilege && "root" in caps.privilege);
+
+  // The ADB wizard moved to the terminal, so its routes are gone rather than
+  // sitting there unreachable. `tca serve` applies privileges on startup and
+  // retries in the background; a browser wizard could only be a worse copy.
+  for (const [method, p] of [
+    ["GET", "/api/privilege"],
+    ["POST", "/api/privilege/recheck"],
+    ["POST", "/api/privilege/pair"],
+    ["POST", "/api/privilege/connect"],
+    ["POST", "/api/privilege/apply"],
+    ["POST", "/api/privilege/install-adb"],
+    ["POST", "/api/privilege/copy-rish"],
+  ]) {
+    const res = await call(p, { method, body: method === "POST" ? "{}" : undefined });
+    assert.equal(res.status, 404, `${method} ${p} should be gone`);
+  }
 
   // An unknown capability id must not reach a package manager. Off Termux the
   // route refuses everything, which is itself the first line of defence.
@@ -304,14 +321,6 @@ test("the capability routes work, and the install route is a narrow door", async
     const res = await call("/api/capabilities/install", { method: "POST", body: JSON.stringify(body) });
     assert.ok(res.status === 400 || res.status === 404, `install ${JSON.stringify(body)} -> ${res.status}`);
   }
-
-  // Bad pairing input is rejected with a translatable key, not a 500.
-  const bad = await call("/api/privilege/pair", {
-    method: "POST",
-    body: JSON.stringify({ address: "1.2.3.4:5555; id", code: "123456" }),
-  });
-  assert.equal(bad.status, 400);
-  assert.equal((await bad.json()).errKey, "priv.err.bad_address");
 
   // The i18n table is reachable without a token, and holds both languages.
   const dict = await (await fetch(`http://127.0.0.1:${port}/assets/i18n.json`)).json();
@@ -374,21 +383,4 @@ test("copyRishFiles finds the export, copies both files, and says why when it ca
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
-
-test("the rish copy route answers with a translation key, not a stack trace", async (t) => {
-  fs.writeFileSync(
-    process.env.TCA_CONFIG,
-    JSON.stringify({ active: "", providers: {}, workspace: path.join(TMP, "ws") }),
-  );
-  const { server, port, token } = await serve({ port: 0, quiet: true });
-  t.after(() => server.close());
-
-  const res = await fetch(`http://127.0.0.1:${port}/api/privilege/copy-rish`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}` },
-  });
-  assert.equal(res.status, 400, "there is no Shizuku export on a dev machine");
-  const body = await res.json();
-  assert.ok(body.errKey, "the UI needs a key it can translate");
-  assert.ok(body.errKey in DICT.vi, `${body.errKey} has no Vietnamese text`);
 });

@@ -25,7 +25,22 @@ import { bootScriptPath, bootScriptPresent, detectBackend, hasBinaryAsync, readP
 import { t, pickLang } from "./i18n.js";
 
 /**
- * @typedef {"required" | "recommended" | "advanced"} Tier
+ * @typedef {"core" | "device" | "optional"} Tier
+ *
+ * Three groups, and the difference between them is who does the work:
+ *
+ *   core      install.sh already installed it. Nothing to decide, nothing to tap.
+ *             It appears as one health line, and only becomes actionable if the
+ *             install actually failed - which is a repair, not a choice.
+ *   device    only you can do it: an Android permission dialog, an F-Droid app,
+ *             pairing ADB. This is the whole reason the Power tab exists.
+ *   optional  heavy, and genuinely a choice. Hundreds of megabytes, so it is
+ *             folded away and asks before downloading.
+ *
+ * The earlier required/recommended/advanced split was wrong: it showed an Install
+ * button for ripgrep next to one for a 400 MB toolchain, as though they were the
+ * same kind of decision, and kept offering to install things install.sh had
+ * already installed.
  *
  * @typedef {object} Capability
  * @property {string} id
@@ -39,55 +54,55 @@ import { t, pickLang } from "./i18n.js";
 
 /** @type {Capability[]} */
 export const CAPABILITIES = [
-  // ----------------------------------------------------------- required
-  { id: "node", tier: "required", weight: 3, packages: ["nodejs"], sizeMb: 40 },
-  { id: "provider", tier: "required", weight: 3 },
-  { id: "workspace", tier: "required", weight: 2 },
-  { id: "shell", tier: "required", weight: 2, packages: ["bash"], sizeMb: 2 },
-
-  // -------------------------------------------------------- recommended
-  { id: "git", tier: "recommended", weight: 3, bin: "git", packages: ["git"], sizeMb: 12 },
-  { id: "fast_search", tier: "recommended", weight: 3, bin: "rg", packages: ["ripgrep"], sizeMb: 4 },
-  { id: "fast_glob", tier: "recommended", weight: 2, bin: "fd", packages: ["fd"], sizeMb: 3 },
-  {
-    id: "notifications",
-    tier: "recommended",
-    weight: 3,
-    termuxOnly: true,
-    bin: "termux-notification",
-    packages: ["termux-api"],
-    sizeMb: 1,
-  },
-  { id: "storage", tier: "recommended", weight: 2, termuxOnly: true },
+  // ---- core: install.sh puts these there. A gap here means something broke. ---
+  { id: "node", tier: "core", weight: 3, packages: ["nodejs"], sizeMb: 40 },
+  { id: "provider", tier: "core", weight: 3 },
+  { id: "workspace", tier: "core", weight: 2 },
+  { id: "shell", tier: "core", weight: 2, packages: ["bash"], sizeMb: 2 },
+  { id: "git", tier: "core", weight: 3, bin: "git", packages: ["git"], sizeMb: 12 },
+  { id: "fast_search", tier: "core", weight: 3, bin: "rg", packages: ["ripgrep"], sizeMb: 4 },
+  { id: "fast_glob", tier: "core", weight: 2, bin: "fd", packages: ["fd"], sizeMb: 3 },
+  { id: "jq", tier: "core", weight: 1, bin: "jq", packages: ["jq"], sizeMb: 1 },
+  { id: "ssh", tier: "core", weight: 1, bin: "sshd", packages: ["openssh"], sizeMb: 10 },
   {
     id: "wake_lock",
-    tier: "recommended",
+    tier: "core",
     weight: 3,
     termuxOnly: true,
     bin: "termux-wake-lock",
     packages: ["termux-api"],
     sizeMb: 1,
   },
-  { id: "privilege", tier: "recommended", weight: 4, termuxOnly: true },
-  { id: "service", tier: "recommended", weight: 1, termuxOnly: true, bin: "sv", packages: ["termux-services"], sizeMb: 1 },
-  { id: "boot", tier: "recommended", weight: 2, termuxOnly: true },
-  { id: "jq", tier: "recommended", weight: 1, bin: "jq", packages: ["jq"], sizeMb: 1 },
+  { id: "service", tier: "core", weight: 1, termuxOnly: true, bin: "sv", packages: ["termux-services"], sizeMb: 1 },
 
-  // ----------------------------------------------------------- advanced
-  { id: "python", tier: "advanced", weight: 2, bin: "python", packages: ["python"], sizeMb: 130 },
+  // ---- device: needs you. A dialog, an app from F-Droid, or ADB pairing. ------
+  { id: "privilege", tier: "device", weight: 4, termuxOnly: true },
+  { id: "storage", tier: "device", weight: 2, termuxOnly: true },
+  {
+    id: "notifications",
+    tier: "device",
+    weight: 3,
+    termuxOnly: true,
+    bin: "termux-notification",
+    packages: ["termux-api"],
+    sizeMb: 1,
+  },
+  { id: "boot", tier: "device", weight: 2, termuxOnly: true },
+
+  // ---- optional: heavy, and a real choice. -----------------------------------
+  { id: "python", tier: "optional", weight: 2, bin: "python", packages: ["python"], sizeMb: 130 },
   {
     id: "build_tools",
-    tier: "advanced",
+    tier: "optional",
     weight: 2,
     bin: "clang",
     packages: ["clang", "make", "binutils"],
     sizeMb: 400,
   },
-  { id: "ssh", tier: "advanced", weight: 1, bin: "sshd", packages: ["openssh"], sizeMb: 10 },
-  { id: "proot", tier: "advanced", weight: 1, bin: "proot-distro", packages: ["proot-distro"], sizeMb: 5 },
+  { id: "proot", tier: "optional", weight: 1, bin: "proot-distro", packages: ["proot-distro"], sizeMb: 5 },
 ];
 
-export const TIERS = /** @type {Tier[]} */ (["required", "recommended", "advanced"]);
+export const TIERS = /** @type {Tier[]} */ (["core", "device", "optional"]);
 
 /** Capability id -> package names, for the install endpoint's allowlist. */
 export function packagesFor(id) {
