@@ -248,37 +248,14 @@ test("denied approval is reported to the model, not crashed on", async (t) => {
   assert.equal(events.at(-1).type, "done");
 });
 
-test("requests without the token are rejected", async (t) => {
-  const fake = fakeProvider([[finish("stop")]]);
-  const providerPort = await listen(fake.server);
-  writeConfig(providerPort);
-  const { server, port } = await serve({ port: 0, quiet: true });
-  t.after(() => {
-    server.close();
-    fake.server.close();
-  });
-
-  const bare = await fetch(`http://127.0.0.1:${port}/api/state`);
-  assert.equal(bare.status, 401);
-
-  const wrong = await fetch(`http://127.0.0.1:${port}/api/state`, {
-    headers: { authorization: "Bearer not-the-token" },
-  });
-  assert.equal(wrong.status, 401);
-
-  // Static files are protected too, not just the API.
-  const html = await fetch(`http://127.0.0.1:${port}/`);
-  assert.equal(html.status, 401);
-
-  const ok = await fetch(`http://127.0.0.1:${port}/?token=${getToken()}`);
-  assert.equal(ok.status, 200);
-  assert.match(await ok.text(), /<html/i);
-});
-
-test("the browser can load subresources after the token in the URL", async (t) => {
-  // Regression: Chrome sends no Authorization header for <link> and <script>,
-  // so requiring a token on static files 401s style.css and app.js. The page
-  // then renders as unstyled HTML with dead buttons.
+test("the API needs the token; the static shell does not", async (t) => {
+  // The boundary moved, on purpose. It used to be "everything needs the token",
+  // which meant opening the bookmarked http://127.0.0.1:8787/ without ?token=
+  // returned raw JSON - the page whose whole job is to ask for a token could
+  // never load to ask for it. index.html/app.js/style.css are the public source
+  // of this project, so they are served to anyone on loopback; every /api/*
+  // route still demands an explicit token, and there is no cookie any more, so
+  // no ambient credential exists to be abused.
   const fake = fakeProvider([[finish("stop")]]);
   const providerPort = await listen(fake.server);
   writeConfig(providerPort);
@@ -288,42 +265,47 @@ test("the browser can load subresources after the token in the URL", async (t) =
     fake.server.close();
   });
 
-  const page = await fetch(`http://127.0.0.1:${port}/?token=${token}`, { redirect: "manual" });
-  assert.equal(page.status, 200);
+  // --- the API is closed ---------------------------------------------------
+  for (const [label, init] of [
+    ["no credentials", {}],
+    ["a wrong token", { headers: { authorization: "Bearer not-the-token" } }],
+    ["a stale cookie", { headers: { cookie: "tca_token=nope" } }],
+  ]) {
+    const res = await fetch(`http://127.0.0.1:${port}/api/state`, init);
+    assert.equal(res.status, 401, `GET /api/state with ${label} must be 401`);
+  }
 
-  const setCookie = page.headers.get("set-cookie") || "";
-  assert.match(setCookie, /tca_token=/, "the HTML load must mint an auth cookie");
-  assert.match(setCookie, /HttpOnly/);
-  assert.match(setCookie, /SameSite=Strict/);
-  const cookie = setCookie.split(";")[0];
+  // Mutating routes too, including the new privileged ones.
+  for (const p of ["/api/sessions", "/api/capabilities/install", "/api/privilege/apply"]) {
+    const res = await fetch(`http://127.0.0.1:${port}${p}`, { method: "POST" });
+    assert.equal(res.status, 401, `POST ${p} must be 401 without a token`);
+  }
+  const capsClosed = await fetch(`http://127.0.0.1:${port}/api/capabilities`);
+  assert.equal(capsClosed.status, 401);
 
-  // Exactly what the browser does next: cookie only, no Authorization header.
-  for (const asset of ["/assets/style.css", "/assets/app.js"]) {
-    const res = await fetch(`http://127.0.0.1:${port}${asset}`, { headers: { cookie } });
-    assert.equal(res.status, 200, `${asset} must load with only the cookie`);
+  // --- the shell is open ---------------------------------------------------
+  const page = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+  assert.equal(page.status, 200, "the token gate must be reachable without a token");
+  assert.match(await page.text(), /<html/i);
+  // No cookie: there is nothing ambient left to confuse a future reader.
+  assert.equal(page.headers.get("set-cookie"), null, "the auth cookie is gone for good");
+
+  for (const asset of ["/assets/style.css", "/assets/app.js", "/assets/i18n.json"]) {
+    const res = await fetch(`http://127.0.0.1:${port}${asset}`);
+    assert.equal(res.status, 200, `${asset} must load with no credentials`);
     assert.ok((await res.text()).length > 100, `${asset} looks empty`);
   }
 
-  // The cookie must NOT be enough for the API: no ambient auth on state changes.
-  const viaCookie = await fetch(`http://127.0.0.1:${port}/api/state`, { headers: { cookie } });
-  assert.equal(viaCookie.status, 401, "cookie must not authenticate the API");
+  // Still an allowlist, not a file server.
+  for (const name of ["style.css.bak", "notes.txt", "secret.env"]) {
+    const res = await fetch(`http://127.0.0.1:${port}/assets/${name}`);
+    assert.equal(res.status, 404, `${name} must not be served`);
+  }
 
-  const posted = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
-    method: "POST",
-    headers: { cookie },
-  });
-  assert.equal(posted.status, 401, "cookie must not authorise a POST");
-
-  // And a wrong cookie is still rejected for static files.
-  const badCookie = await fetch(`http://127.0.0.1:${port}/assets/app.js`, {
-    headers: { cookie: "tca_token=nope" },
-  });
-  assert.equal(badCookie.status, 401);
-
-  // Visiting / without a token must not hand out a cookie.
-  const bare = await fetch(`http://127.0.0.1:${port}/`);
-  assert.equal(bare.status, 401);
-  assert.equal(bare.headers.get("set-cookie"), null);
+  // --- and the token still works ------------------------------------------
+  const authed = await fetch(`http://127.0.0.1:${port}/api/state?token=${token}`);
+  assert.equal(authed.status, 200);
+  assert.equal(getToken(), token);
 });
 
 test("index.html only references subresources the daemon actually serves", async (t) => {
@@ -568,26 +550,6 @@ test("aborting a turn closes any approval card still waiting", async (t) => {
   assert.ok(request, "expected an approval request");
   assert.ok(closed, `expected approval_closed, got ${events.map((e) => e.type)}`);
   assert.equal(closed.id, request.id, "the UI needs the id to disable the right card");
-});
-
-test("/assets only serves the web files, not leftovers next to them", async (t) => {
-  const fake = fakeProvider([[finish("stop")]]);
-  const providerPort = await listen(fake.server);
-  writeConfig(providerPort);
-  const { server, port, token } = await serve({ port: 0, quiet: true });
-  t.after(() => {
-    server.close();
-    fake.server.close();
-  });
-
-  const ok = await fetch(`http://127.0.0.1:${port}/assets/app.js?token=${token}`);
-  assert.equal(ok.status, 200);
-
-  // A backup or note dropped into src/web must not become a public URL.
-  for (const name of ["style.css.bak", "notes.txt", "secret.env"]) {
-    const res = await fetch(`http://127.0.0.1:${port}/assets/${name}?token=${token}`);
-    assert.equal(res.status, 404, `${name} must not be served`);
-  }
 });
 
 test("the UI handles every event the daemon can emit", async () => {

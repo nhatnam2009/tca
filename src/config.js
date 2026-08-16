@@ -43,6 +43,7 @@ import os from "node:os";
  * @property {string} workspace                     agent is confined to this dir
  * @property {boolean} autoApproveCommands
  * @property {boolean} [autoApproveEdits]           false = confirm every file write
+ * @property {"vi"|"en"} [lang]                     UI + doctor language
  * @property {string[]} [denyCommands]              extra regexes, always blocked
  * @property {number} [maxSteps]
  * @property {number} [port]
@@ -82,6 +83,9 @@ export function defaultConfig() {
     // and tapping Allow for every write on a phone makes the agent unusable.
     // Turn it off in Settings when pointing the agent at something you care about.
     autoApproveEdits: true,
+    // Vietnamese by default: this is built for Termux users on a phone, and the
+    // web UI has a switch. `tca doctor` reads it too.
+    lang: "vi",
     maxSteps: 40,
     port: 8787,
     instructions: "",

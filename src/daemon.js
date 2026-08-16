@@ -20,11 +20,23 @@ import { addProvider, testProvider, seedFromEnv } from "./setup.js";
 import { createSession, listSessions, getSession, deleteSession } from "./store.js";
 import { Runner } from "./loop.js";
 import { getStatus } from "./status.js";
+import { getCapabilities, packagesFor } from "./capabilities.js";
+import {
+  adbConnect,
+  adbPair,
+  applyUnlocks,
+  detectBackend,
+  hasBinary,
+  installAdb,
+  invalidateBackendCache,
+  readPhantomLimit,
+  run as runProcess,
+} from "./privilege.js";
+import { DICT, LANGS, DEFAULT_LANG } from "./i18n.js";
 
 const WEB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "web");
 const VERSION = "0.1.0";
 const HEARTBEAT_MS = 20_000;
-const COOKIE_NAME = "tca_token";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -69,6 +81,9 @@ export async function serve(opts = {}) {
   const listeners = new Map();
   /** @type {Map<string, Runner>} */
   const runners = new Map();
+  // dpkg holds a lock: two concurrent taps on "Install" would only produce a
+  // confusing failure, so refuse the second one with a 409 instead.
+  let installBusy = false;
 
   const emitTo = (sessionId, event) => {
     const set = listeners.get(sessionId);
@@ -84,16 +99,23 @@ export async function serve(opts = {}) {
       method === "GET" &&
       (url.pathname === "/" || url.pathname === "/index.html" || url.pathname.startsWith("/assets/"));
 
-    // The browser sends no Authorization header when it fetches style.css and
-    // app.js, so a token-only rule 401s every subresource and the page renders
-    // as raw unstyled HTML with dead buttons. A cookie set on the HTML load
-    // fixes that, and is accepted for static GETs ONLY: the API still demands an
-    // explicit token, which keeps ambient cookie auth away from anything that
-    // mutates state and leaves no CSRF surface.
+    // The static shell is public, the API is not.
+    //
+    // It used to all be behind the token, which meant opening the bookmarked
+    // http://127.0.0.1:8787/ without ?token= returned raw JSON: {"error":
+    // "unauthorized"}. The page that exists precisely to ask for a token could
+    // never be reached to ask for it. index.html, app.js and style.css are the
+    // public source of this project anyway, so serving them to anyone on
+    // loopback gives nothing away, and now the token gate can actually render.
+    //
+    // This also retires the auth cookie, which only ever existed because the
+    // browser sends no Authorization header for <link> and <script>. Every
+    // /api/* route below still demands an explicit token, so there is no ambient
+    // credential anywhere and therefore no CSRF surface.
     const explicit =
       tokenMatches((req.headers.authorization || "").replace(/^Bearer\s+/i, ""), token) ||
       tokenMatches(url.searchParams.get("token") || "", token);
-    const authed = explicit || (isStatic && tokenMatches(cookieToken(req), token));
+    const authed = explicit || isStatic;
 
     if (!authed) {
       res.writeHead(401, { "content-type": "application/json", "cache-control": "no-store" });
@@ -102,7 +124,7 @@ export async function serve(opts = {}) {
     }
 
     try {
-      await route(req, res, url, explicit);
+      await route(req, res, url);
     } catch (err) {
       const e = /** @type {Error} */ (err);
       if (!res.headersSent) json(res, 500, { error: `${e.name}: ${e.message}` });
@@ -110,17 +132,26 @@ export async function serve(opts = {}) {
     }
   });
 
-  async function route(req, res, url, explicit) {
+  async function route(req, res, url) {
     const { pathname } = url;
     const method = req.method || "GET";
 
     // ---- static ------------------------------------------------------------
     if (method === "GET" && (pathname === "/" || pathname === "/index.html")) {
-      // Only mint the cookie when the caller proved it has the real token.
-      const cookie = explicit
-        ? `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`
-        : undefined;
-      return sendFile(res, path.join(WEB_DIR, "index.html"), cookie);
+      return sendFile(res, path.join(WEB_DIR, "index.html"));
+    }
+    // The translation table, as JSON, for the browser: src/web/app.js is a
+    // classic script and cannot import src/i18n.js. Served as a static asset so
+    // the token gate itself has language before anyone has authenticated.
+    if (method === "GET" && pathname === "/assets/i18n.json") {
+      const body = Buffer.from(JSON.stringify({ langs: LANGS, default: DEFAULT_LANG, dict: DICT }));
+      res.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+        "content-length": body.length,
+        "x-content-type-options": "nosniff",
+      });
+      return res.end(body);
     }
     if (method === "GET" && pathname.startsWith("/assets/")) {
       const name = path.basename(pathname);
@@ -153,7 +184,8 @@ export async function serve(opts = {}) {
       });
     }
     if (method === "GET" && pathname === "/api/status") {
-      return json(res, 200, getStatus());
+      const { config } = loadConfig();
+      return json(res, 200, await getStatus(url.searchParams.get("lang") || config.lang));
     }
     if (method === "GET" && pathname === "/api/config") {
       const { raw } = loadConfig();
@@ -163,6 +195,69 @@ export async function serve(opts = {}) {
       const body = await readJson(req);
       const file = saveConfig(body);
       return json(res, 200, { ok: true, path: file });
+    }
+
+    // ---- capabilities & Android privileges --------------------------------
+    // What the agent could do on this device, what is missing, and the three
+    // ways to grant it the Android privileges it needs.
+    if (method === "GET" && pathname === "/api/capabilities") {
+      const { config } = loadConfig();
+      return json(res, 200, await getCapabilities(url.searchParams.get("lang") || config.lang));
+    }
+
+    if (method === "POST" && pathname === "/api/capabilities/install") {
+      const body = await readJson(req);
+      return installCapability(res, String(body.id || ""));
+    }
+
+    if (method === "GET" && pathname === "/api/privilege") {
+      const backend = await detectBackend();
+      return json(res, 200, { ...backend, phantomLimit: await readPhantomLimit() });
+    }
+
+    if (method === "POST" && pathname === "/api/privilege/recheck") {
+      invalidateBackendCache();
+      const backend = await detectBackend();
+      // Finding a backend is only useful if the unlocks are actually on, and
+      // they are lost on reboot, so re-apply as part of every recheck.
+      const applied = backend.kind ? await applyUnlocks(backend.kind) : { kind: null, applied: [], ok: false };
+      return json(res, 200, { ...backend, applied: applied.applied, appliedOk: applied.ok });
+    }
+
+    if (method === "POST" && pathname === "/api/privilege/install-adb") {
+      if (installBusy) return json(res, 409, { error: "another install is running" });
+      installBusy = true;
+      try {
+        const r = await installAdb();
+        invalidateBackendCache();
+        return json(res, r.ok ? 200 : 500, {
+          ok: r.ok,
+          installed: hasBinary("adb"),
+          output: `${r.out}\n${r.err}`.trim().slice(0, 4000),
+        });
+      } finally {
+        installBusy = false;
+      }
+    }
+
+    if (method === "POST" && pathname === "/api/privilege/pair") {
+      const body = await readJson(req);
+      const r = await adbPair(body.address, body.code);
+      return json(res, r.ok ? 200 : 400, r);
+    }
+
+    if (method === "POST" && pathname === "/api/privilege/connect") {
+      const body = await readJson(req);
+      const r = await adbConnect(body.address);
+      if (!r.ok) return json(res, 400, r);
+      const applied = await applyUnlocks("adb");
+      return json(res, 200, { ...r, applied: applied.applied, appliedOk: applied.ok });
+    }
+
+    if (method === "POST" && pathname === "/api/privilege/apply") {
+      const applied = await applyUnlocks();
+      if (!applied.kind) return json(res, 400, { ok: false, errKey: "priv.err.no_backend" });
+      return json(res, 200, { ok: applied.ok, kind: applied.kind, applied: applied.applied });
     }
 
     // ---- providers & catalog ----------------------------------------------
@@ -276,6 +371,51 @@ export async function serve(opts = {}) {
     return json(res, 404, { error: `no route for ${method} ${pathname}` });
   }
 
+  /**
+   * Install the packages behind one capability.
+   *
+   * This is the only place where something a browser sent reaches a process
+   * spawn, so it is deliberately narrow:
+   *   - the body carries a capability id, never a package name, and the id is
+   *     looked up in the fixed table in capabilities.js;
+   *   - apt is invoked with an argv array, never through a shell, so no
+   *     metacharacter in any input could matter even if one got this far;
+   *   - --force-confold plus DEBIAN_FRONTEND=noninteractive, because there is no
+   *     terminal here: a dpkg conffile prompt would hang the request forever;
+   *   - one install at a time, since dpkg holds a lock anyway and two concurrent
+   *     taps would just produce a confusing failure.
+   */
+  async function installCapability(res, id) {
+    if (!process.env.TERMUX_VERSION) {
+      return json(res, 400, { error: "package installs are only supported under Termux" });
+    }
+    const packages = packagesFor(id);
+    if (!packages) return json(res, 404, { error: `nothing installable for capability: ${id}` });
+    if (installBusy) return json(res, 409, { error: "another install is running" });
+
+    installBusy = true;
+    try {
+      const r = await runProcess(
+        "apt-get",
+        ["install", "-y", "-o", "Dpkg::Options::=--force-confold", "-o", "Dpkg::Options::=--force-confdef", ...packages],
+        { timeout: 20 * 60_000, env: { DEBIAN_FRONTEND: "noninteractive" } },
+      );
+      invalidateBackendCache();
+      const { config } = loadConfig();
+      const caps = await getCapabilities(config.lang);
+      const item = caps.groups.flatMap((g) => g.items).find((i) => i.id === id) || null;
+      return json(res, r.ok ? 200 : 500, {
+        ok: r.ok,
+        id,
+        packages,
+        item,
+        output: `${r.out}\n${r.err}`.trim().slice(0, 8000),
+      });
+    } finally {
+      installBusy = false;
+    }
+  }
+
   function openStream(req, res, sessionId) {
     res.writeHead(200, {
       "content-type": "text/event-stream",
@@ -332,14 +472,13 @@ function json(res, status, body) {
   res.end(payload);
 }
 
-function sendFile(res, file, setCookie) {
+function sendFile(res, file) {
   const ext = path.extname(file);
   const body = fs.readFileSync(file);
   res.writeHead(200, {
     "content-type": MIME[ext] || "application/octet-stream",
     "cache-control": "no-store",
     "content-length": body.length,
-    ...(setCookie ? { "set-cookie": setCookie } : {}),
     // The UI renders model output; keep it from pulling anything remote.
     "content-security-policy":
       "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'",
@@ -347,18 +486,6 @@ function sendFile(res, file, setCookie) {
     "referrer-policy": "no-referrer",
   });
   res.end(body);
-}
-
-/** Read our auth cookie out of the request. */
-function cookieToken(req) {
-  const raw = req.headers.cookie || "";
-  for (const part of raw.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() !== COOKIE_NAME) continue;
-    return decodeURIComponent(part.slice(eq + 1).trim());
-  }
-  return "";
 }
 
 function readJson(req, limit = 2_000_000) {

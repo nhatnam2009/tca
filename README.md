@@ -9,33 +9,25 @@ workspace directory. You drive it from the phone's browser.
 
 ## Install
 
-On Termux, one command does everything (packages, the `tca` command, storage
-permission, wake lock, health check, and optionally the ADB unlocks):
+One command, on a fresh Termux, start to finish:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/nhatnam2009/tca/main/install.sh | bash
+pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/nhatnam2009/tca/main/install.sh | bash
 ```
 
-Or the smaller, non-interactive path, which also works on a desktop:
+It installs the packages, clones into `~/tca`, creates the `tca` and `nhatnam`
+commands, asks Android for storage permission, sets up a service so the daemon
+survives being killed, and stops. It asks no questions: everything interactive
+(ADB pairing, Shizuku, picking a model) lives in the web UI instead, because
+tapping a button on a phone beats typing a command into a terminal.
+
+Then:
 
 ```sh
-pkg install nodejs git
-git clone https://github.com/nhatnam2009/tca.git ~/tca
-cd ~/tca
-bash setup.sh          # deps, storage permission, workspace, health check
-node src/cli.js serve
+nhatnam
 ```
 
-Later, to update:
-
-```sh
-cd ~/tca && git pull
-```
-
-Both leave you with two commands: `tca` (the full CLI) and `nhatnam` (no
-arguments = start the agent).
-
-`serve` prints a URL with an access token. Open it in Chrome on the phone:
+That prints a URL with an access token. Open it in Chrome on the phone:
 
 ```
 http://127.0.0.1:8787/?token=...
@@ -45,6 +37,20 @@ First run shows a setup wizard: pick a model, paste an API key, test the
 connection. If an API key is already exported in your shell (`ANTHROPIC_API_KEY`,
 `GROQ_API_KEY`, ...) it is detected and the wizard is skipped.
 
+On a desktop the same script works and skips the Android parts:
+
+```sh
+git clone https://github.com/nhatnam2009/tca.git
+cd tca && bash install.sh
+tca serve
+```
+
+To update later:
+
+```sh
+cd ~/tca && git pull
+```
+
 ## Commands
 
 ```
@@ -53,10 +59,12 @@ tca run "task"       one-shot turn in the terminal, no browser
 tca token            reprint the URL with the token
 tca models           the recommended model shortlist
 tca doctor           check this device's setup
-tca adb-setup        unlock the Android limits below over wireless ADB
+tca power            what the agent can do here, and what is missing
+tca adb-setup        grant Android privileges (root / Shizuku / wireless ADB)
 ```
 
-(Without the shortcut installed: `node src/cli.js <command>`.)
+`nhatnam` with no arguments is `tca serve`; with arguments it forwards them, so
+`nhatnam power` works too.
 
 ## Providers
 
@@ -138,8 +146,14 @@ Point `workspace` at a directory under git. Then a bad edit is one
 The daemon binds `127.0.0.1` only, and refuses any other host. That is necessary
 but **not sufficient on Android**: the platform does not isolate localhost between
 apps, so any installed app can reach the port. The bearer token is what actually
-protects the agent, which is why even the static files require it. The token lives
-in `~/.tca/token` (mode 600).
+protects the agent. It lives in `~/.tca/token` (mode 600).
+
+The static shell (`index.html`, `app.js`, `style.css`, `i18n.json`) is served
+without a token, because it is the public source of this project and because the
+page whose whole job is to ask for a token has to be reachable to ask for it.
+Every `/api/*` route demands an explicit token in a header or the query string.
+There is no auth cookie, so no ambient credential exists and there is no CSRF
+surface.
 
 For remote access use SSH forwarding, not a wider bind:
 
@@ -153,28 +167,45 @@ These cost more debugging time than anything in the code:
 
 - **Phantom process killer (Android 12+)** caps an app at ~32 child processes and
   kills the excess. A coding agent spawns a shell per `run_command`, so long runs
-  die at random. Easiest fix, run entirely on the phone:
-  ```sh
-  tca adb-setup      # pairs wireless ADB with itself, then applies the unlocks
-  ```
-  Or from a PC:
-  ```sh
-  adb shell "/system/bin/device_config set_sync_disabled_for_tests persistent; \
-    /system/bin/device_config put activity_manager max_phantom_processes 2147483647"
-  ```
-  Some devices reset it on reboot. `doctor` reports the current value when it can
-  read it.
-- **Battery optimization** suspends the daemon seconds after screen-off. Set
-  Termux to Unrestricted, and use `termux-wake-lock` (the runit service does this
-  for you). Xiaomi, Samsung and Oppo need an extra autostart whitelist entry.
-- **No systemd.** `bash setup.sh --service` installs a runit service via
-  `termux-services`. Note that runit starts from `~/.bashrc`, so after a reboot it
-  only comes up once you open Termux; Android has no true boot service for
-  unprivileged apps.
+  die at random. This is the single most important thing to fix on a modern phone.
+
+  There is more than one way to get the privilege to fix it, and `src/privilege.js`
+  tries them best-first rather than assuming ADB:
+
+  | backend | needs | survives reboot |
+  |---|---|---|
+  | `root` | `su` | yes |
+  | `rish` | the Shizuku app, plus its `rish` files copied into `~` | pairing does; restart the app |
+  | `adb`  | wireless debugging paired from the phone to itself | no, pair again |
+
+  Run `tca adb-setup`, or use the Power tab in the web UI, which drives the same
+  functions. `tca serve` re-applies the unlocks on every start, because wireless
+  ADB pairing is lost on reboot and the failure is otherwise invisible.
+- **Battery optimization** suspends the daemon seconds after screen-off. `tca serve`
+  now takes a `termux-wake-lock` itself and releases it on exit, so this is no
+  longer a step to forget. Set Termux to Unrestricted as well; Xiaomi, Samsung and
+  Oppo need an extra autostart whitelist entry.
+- **No systemd.** `install.sh` installs a runit service through `termux-services`.
+  Note that runit starts from `~/.bashrc`, so after a reboot it only comes up once
+  you open Termux; Android has no true boot service for unprivileged apps.
 - **`/bin/sh` does not exist.** Termux keeps its userland in `$PREFIX` and the
   system shell is `/system/bin/sh`. `pickShell()` in `src/tools.js` probes for a
   real one.
 - **Ports below 1024** are blocked without root.
+
+## Capabilities
+
+`tca power` (and the Power tab) answers a different question from `doctor`: not
+"is anything broken" but "what could this agent do here that it currently cannot".
+Each entry is described by benefit rather than by package name, scored, and
+grouped into three tiers so everything already working stays collapsed.
+
+```sh
+tca power
+```
+
+The catalogue is `src/capabilities.js`. It is also the allowlist for the install
+endpoint: the browser sends a capability id, never a package name.
 
 ## Tools
 
@@ -195,28 +226,32 @@ approval; file changes ask only when `autoApproveEdits` is off.
 
 ```
 src/config.js        config resolution, ${ENV} expansion, key redaction
+src/i18n.js          vi/en strings, read by Node and served to the browser
 src/providers.js     30 probed providers: base URL, wire format, env vars
 src/catalog.js       models.dev catalog: offline seed + optional full download
 src/recommended.js   curated shortlist
 src/setup.js         env key detection, add provider, test connection
 src/provider.js      the two wire formats, SSE streaming, retries
 src/tools.js         13 tools + workspace confinement + denylist + diff engine
+src/privilege.js     root / Shizuku / adb backends, and the Android unlocks
+src/capabilities.js  what the agent could do here, scored and tiered
+src/status.js        the `doctor` view of capabilities.js
 src/store.js         sessions as JSONL
 src/loop.js          the agent loop
 src/daemon.js        HTTP + SSE + auth + static files
-src/cli.js           serve / run / token / models / doctor / adb-setup
+src/cli.js           serve / run / token / models / doctor / power / adb-setup
 src/web/             the UI: no framework, no build
-install.sh           one-shot Termux install (interactive)
-setup.sh             minimal install, also works on a desktop
+install.sh           the one-command install, non-interactive
 tools/gen-seed.mjs   regenerates the offline catalog
-test/agent.test.mjs  end-to-end against a fake provider
-test/markdown.test.mjs  the UI renderer, in a DOM stub
+test/agent.test.mjs        end-to-end against a fake provider
+test/capabilities.test.mjs capabilities, privileges, i18n key parity
+test/markdown.test.mjs     the UI renderer, in a DOM stub
 ```
 
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 38 tests, no network or API key needed
+node --test test/*.test.mjs     # 53 tests, no network or API key needed
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```
 
@@ -225,6 +260,8 @@ that speaks the OpenAI wire format, so they cover tool execution, approval
 handling, auth and path confinement without spending tokens. `markdown.test.mjs`
 loads `src/web/app.js` into a small DOM stub that has no `innerHTML` on it, so
 the renderer is pinned down and cannot quietly grow an XSS hole.
+`capabilities.test.mjs` asserts that `vi` and `en` define exactly the same keys,
+which is the only thing that stops a bilingual UI from rotting.
 
 Types are JSDoc, checked with `tsc --noEmit` on a dev machine. There is no
 TypeScript build: the phone runs the source as-is.

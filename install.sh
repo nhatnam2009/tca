@@ -1,242 +1,269 @@
 #!/usr/bin/env bash
 # =============================================================================
-# TCA (Termux Coding Agent) - One-shot setup script
-# Chạy lệnh này trong Termux để cài đặt toàn bộ:
-#   curl -fsSL https://raw.githubusercontent.com/nhatnam2009/tca/main/install.sh | bash
-# hoặc nếu copy file này vào Termux:
+# TCA (Termux Coding Agent) - cài đặt bằng MỘT lệnh.
+#
+#   pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/nhatnam2009/tca/main/install.sh | bash
+#
+# Hoặc nếu đã có source:
 #   bash install.sh
+#
+# Script này KHÔNG hỏi gì cả. Mọi thứ tương tác (ghép nối ADB, Shizuku, chọn
+# model) đã chuyển vào web UI, vì bấm nút trên điện thoại dễ hơn gõ lệnh nhiều.
+#
+# Chạy lại bao nhiêu lần cũng được: mọi bước đều idempotent, không xoá gì.
 # =============================================================================
 
-set -e
+set -uo pipefail
 
-BOLD="\e[1m"
-GREEN="\e[32m"
-YELLOW="\e[33m"
-RED="\e[31m"
-CYAN="\e[36m"
-RESET="\e[0m"
+BOLD="\e[1m"; DIM="\e[2m"; GREEN="\e[32m"; YELLOW="\e[33m"; RED="\e[31m"; CYAN="\e[36m"; RESET="\e[0m"
+step() { echo -e "\n${BOLD}${CYAN}==>${RESET} ${BOLD}$1${RESET}"; }
+ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
+warn() { echo -e "  ${YELLOW}!${RESET} $1"; }
+info() { echo -e "  ${DIM}$1${RESET}"; }
+die()  { echo -e "\n${RED}✗ $1${RESET}\n" >&2; exit 1; }
 
-step() { echo -e "\n${BOLD}${CYAN}==> $1${RESET}"; }
-ok()   { echo -e "${GREEN}[ok]${RESET} $1"; }
-warn() { echo -e "${YELLOW}[!]${RESET}  $1"; }
-die()  { echo -e "${RED}[!!]${RESET} $1"; exit 1; }
-
-# When this script is piped into bash (curl ... | bash) stdin is the script
-# itself, not the keyboard. Read questions from the terminal directly, and
-# answer "no" if there is no terminal at all.
-ask() {
-  local reply=""
-  printf '%s' "$1"
-  if { read -r reply < /dev/tty; } 2>/dev/null; then
-    printf '\n'
-  else
-    reply=""
-    printf '(không có terminal - mặc định: không)\n'
-  fi
-  case "$(printf '%s' "$reply" | tr '[:upper:]' '[:lower:]')" in
-    y | yes) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+in_termux() { [ -n "${TERMUX_VERSION:-}" ] && [ -n "${PREFIX:-}" ]; }
 
 echo -e "${BOLD}"
-echo "╔══════════════════════════════════════╗"
-echo "║   TCA - Termux Coding Agent Setup   ║"
-echo "╚══════════════════════════════════════╝"
+echo "  ╔════════════════════════════════════╗"
+echo "  ║   TCA · coding agent cho Termux    ║"
+echo "  ╚════════════════════════════════════╝"
 echo -e "${RESET}"
 
-# ── 0. Kiểm tra môi trường ───────────────────────────────────────────────────
-if [ -z "${TERMUX_VERSION:-}" ] || [ -z "${PREFIX:-}" ]; then
-  die "install.sh chỉ dùng cho Termux trên Android.\nTrên máy tính hãy chạy: bash setup.sh"
+# ─── 1. Gói hệ thống ─────────────────────────────────────────────────────────
+
+if in_termux; then
+  step "Cài gói hệ thống"
+
+  # apt sẽ hỏi "sources.list đã bị sửa, giữ bản nào?" và khi script được pipe
+  # vào bash thì stdin là chính script, nên dpkg nhận EOF rồi bỏ dở gói apt.
+  # --force-confold = luôn giữ file của bạn, không hỏi.
+  export DEBIAN_FRONTEND=noninteractive
+  KEEP=(-o "Dpkg::Options::=--force-confold" -o "Dpkg::Options::=--force-confdef")
+
+  # Hoàn tất gói cài dở từ lần trước (no-op nếu không có gì dở dang).
+  dpkg --configure -a --force-confold >/dev/null 2>&1 || true
+
+  info "đang cập nhật danh sách gói…"
+  apt-get update -y "${KEEP[@]}" >/dev/null 2>&1 || warn "apt update không xong, vẫn thử tiếp"
+
+  # Nâng cấp trước khi cài nodejs: node được build với libc++ mới hơn, cài lẻ
+  # trên hệ thống cũ là gặp "CANNOT LINK EXECUTABLE" ngay.
+  info "đang nâng cấp hệ thống (có thể mất vài phút)…"
+  apt-get upgrade -y "${KEEP[@]}" >/dev/null 2>&1 || warn "apt upgrade không xong, vẫn thử tiếp"
+
+  # nodejs+git là bắt buộc. Còn lại làm agent mạnh hơn rõ rệt và đều rất nhẹ:
+  #   ripgrep  tool grep nhanh hơn nhiều lần thay vì tự đọc file bằng JS
+  #   fd       tool glob nhanh hơn
+  #   termux-api  wake lock + thông báo khi agent xong việc
+  #   jq       nhiều lệnh agent hay dùng cần nó
+  REQUIRED=(nodejs git)
+  EXTRAS=(ripgrep fd termux-api jq termux-services)
+
+  # Tên gói Termux có đổi theo thời gian. Gói nào không tồn tại thì bỏ qua kèm
+  # cảnh báo, chứ không làm sập cả lần cài.
+  WANT=()
+  for pkg in "${REQUIRED[@]}" "${EXTRAS[@]}"; do
+    if apt-cache show "$pkg" >/dev/null 2>&1; then
+      WANT+=("$pkg")
+    else
+      warn "không có gói '$pkg' trong repo này, bỏ qua"
+    fi
+  done
+
+  info "đang cài: ${WANT[*]}"
+  if ! apt-get install -y "${KEEP[@]}" "${WANT[@]}" >/dev/null 2>&1; then
+    warn "cài cả lượt thất bại, thử từng gói…"
+    for pkg in "${WANT[@]}"; do
+      apt-get install -y "${KEEP[@]}" "$pkg" >/dev/null 2>&1 && ok "$pkg" || warn "$pkg thất bại"
+    done
+  fi
+  ok "xong phần gói"
+else
+  step "Không phải Termux — bỏ qua cài gói"
+  info "Hãy tự đảm bảo có node 20+ và git trên PATH."
 fi
 
-# ── 1. Termux packages ───────────────────────────────────────────────────────
-step "Cập nhật Termux & cài packages cần thiết"
+# ─── 2. Kiểm tra node ────────────────────────────────────────────────────────
 
-# apt hỏi "sources.list đã bị sửa, giữ bản nào?" và nếu stdin là pipe thì nó
-# nhận EOF rồi bỏ dở gói apt. --force-confold = luôn giữ file của bạn.
-export DEBIAN_FRONTEND=noninteractive
-KEEP_CONF=(-o "Dpkg::Options::=--force-confold" -o "Dpkg::Options::=--force-confdef")
+step "Kiểm tra Node.js"
+command -v node >/dev/null || die "Không có node.$(in_termux && echo '
+  Chạy: pkg install nodejs')"
+command -v git >/dev/null || warn "Không có git — agent vẫn chạy nhưng bạn sẽ khó quay lại bản cũ."
 
-# Hoàn tất gói cài dở từ lần chạy trước (no-op nếu không có gì dở dang).
-dpkg --configure -a --force-confold >/dev/null 2>&1 || true
-
-apt-get update -y "${KEEP_CONF[@]}" || warn "apt update không xong, vẫn thử cài tiếp"
-# Nâng cấp là khuyến nghị của Termux (node được build với libc++ mới hơn), nhưng
-# một gói lẻ bị lỗi không được phép làm chết cả script.
-apt-get upgrade -y "${KEEP_CONF[@]}" || warn "apt upgrade không xong, vẫn thử cài tiếp"
-
-apt-get install -y "${KEEP_CONF[@]}" nodejs git \
-  || die "Không cài được nodejs/git.\n  Thử: pkg install nodejs git"
-
-command -v node >/dev/null || die "node vẫn không có sau khi cài. Chạy: pkg install nodejs"
-command -v git  >/dev/null || die "git vẫn không có sau khi cài. Chạy: pkg install git"
-
-# node có thể cài được nhưng không chạy: đó là lỗi libc++ của Termux, không phải
-# lỗi của dự án này. Phân biệt rõ để bạn không đi sửa sai chỗ.
-NODE_PROBE="$(node -p 'process.versions.node' 2>&1)" || NODE_BROKEN=1
-if [ -n "${NODE_BROKEN:-}" ]; then
-  echo -e "${RED}[!!]${RESET} node đã cài nhưng không chạy được:"
-  echo "     $NODE_PROBE"
-  case "$NODE_PROBE" in
+# Ba kiểu lỗi khác nhau, và phân biệt được chúng rất quan trọng: "chưa cài",
+# "cài rồi nhưng thư viện lệch" (rất hay gặp trên Termux), và "quá cũ".
+if ! NODE_V="$(node -p 'process.versions.node' 2>&1)"; then
+  echo -e "\n${RED}✗ node đã cài nhưng không chạy được:${RESET}" >&2
+  echo "    $NODE_V" >&2
+  case "$NODE_V" in
     *"CANNOT LINK EXECUTABLE"* | *"cannot locate symbol"*)
-      echo ""
-      echo "  Đây là lỗi lệch thư viện của Termux. Sửa bằng:"
-      echo "    pkg update && pkg upgrade -y"
-      echo "  Vẫn lỗi thì:"
-      echo "    pkg reinstall libc++ nodejs"
-      echo ""
-      echo "  Nếu vẫn lỗi: bản Termux trên Google Play đã bị bỏ và repo của nó hỏng."
-      echo "  Hãy cài Termux từ F-Droid hoặc GitHub releases."
+      cat >&2 <<'DIAG'
+
+  Đây là lỗi lệch thư viện của Termux, không phải lỗi của dự án này. Binary node
+  được build với libc++ mới hơn bản đang cài — xảy ra khi cài nodejs mà chưa
+  nâng cấp hệ thống trước.
+
+  Sửa:
+    pkg update && pkg upgrade -y
+    node -v
+
+  Vẫn lỗi:
+    pkg reinstall libc++ nodejs
+
+  Vẫn lỗi nữa: kiểm tra Termux đến từ đâu bằng  termux-info | head -20
+  Bản Termux trên Google Play đã bị bỏ và repo của nó hỏng. Hãy cài Termux từ
+  F-Droid hoặc từ GitHub releases.
+DIAG
       ;;
   esac
   exit 1
 fi
 
-if [ "${NODE_PROBE%%.*}" -lt 20 ]; then
-  die "Cần Node 20+, đang có v$NODE_PROBE.\n  Chạy: pkg upgrade nodejs"
-fi
+[ "${NODE_V%%.*}" -ge 20 ] || die "Cần Node 20+, đang có v$NODE_V.
+  Chạy: pkg upgrade nodejs"
+ok "node v$NODE_V"
+info "không cần npm install — dự án này không có dependency nào"
 
-ok "Node v$NODE_PROBE | git $(git --version | awk '{print $3}')"
+# ─── 3. Source code ──────────────────────────────────────────────────────────
 
-# ── 2. Clone hoặc pull repo ──────────────────────────────────────────────────
-TCA_DIR="$HOME/tca"
-# Đổi TCA_REPO nếu bạn fork sang chỗ khác: TCA_REPO=<url> bash install.sh
+step "Source code"
 TCA_REPO="${TCA_REPO:-https://github.com/nhatnam2009/tca.git}"
-
-step "Cài đặt TCA vào $TCA_DIR"
-if [ -f "./src/cli.js" ]; then
-  # Đang chạy từ trong thư mục TCA rồi (trường hợp giải nén zip) - dùng luôn.
-  TCA_DIR="$(pwd)"
-  ok "Đang dùng thư mục hiện tại: $TCA_DIR"
-elif [ -d "$TCA_DIR/.git" ]; then
-  warn "Thư mục $TCA_DIR đã tồn tại, tiến hành cập nhật..."
-  git -C "$TCA_DIR" pull --ff-only
-  ok "Đã cập nhật lên phiên bản mới nhất"
-elif [ -f "$TCA_DIR/src/cli.js" ]; then
-  ok "Đã có sẵn source tại $TCA_DIR"
-else
-  git clone "$TCA_REPO" "$TCA_DIR"
-  ok "Đã clone từ $TCA_REPO"
+SELF_DIR=""
+# BASH_SOURCE trỏ tới /dev/stdin khi script được pipe vào bash, nên chỉ tin nó
+# khi nó thật sự là một file có src/cli.js bên cạnh.
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
 fi
 
-# ── 3. Link CLI toàn cục ─────────────────────────────────────────────────────
-step "Link lệnh 'tca' vào PATH"
+if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/src/cli.js" ]; then
+  TCA_DIR="$SELF_DIR"
+  ok "dùng thư mục hiện có: $TCA_DIR"
+elif [ -f "./src/cli.js" ]; then
+  TCA_DIR="$(pwd)"
+  ok "dùng thư mục hiện tại: $TCA_DIR"
+else
+  TCA_DIR="$HOME/tca"
+  if [ -d "$TCA_DIR/.git" ]; then
+    info "đang cập nhật $TCA_DIR…"
+    git -C "$TCA_DIR" pull --ff-only >/dev/null 2>&1 && ok "đã cập nhật" || warn "pull không xong, dùng bản đang có"
+  elif [ -f "$TCA_DIR/src/cli.js" ]; then
+    ok "đã có sẵn tại $TCA_DIR"
+  else
+    command -v git >/dev/null || die "Cần git để tải source. Chạy: pkg install git"
+    info "đang clone $TCA_REPO…"
+    git clone --depth 1 "$TCA_REPO" "$TCA_DIR" >/dev/null 2>&1 || die "Clone thất bại. Kiểm tra mạng."
+    ok "đã clone vào $TCA_DIR"
+  fi
+fi
 cd "$TCA_DIR"
-chmod +x "$TCA_DIR/src/cli.js"
-# npm link cần quyền write vào prefix và khá chậm trên điện thoại; symlink là đủ.
-mkdir -p "$PREFIX/bin"
-ln -sf "$TCA_DIR/src/cli.js" "$PREFIX/bin/tca"
-# 'nhatnam' không tham số = 'tca serve', cho nhanh khi gõ trên điện thoại.
-cat > "$PREFIX/bin/nhatnam" <<EOF
-#!$PREFIX/bin/sh
+
+# ─── 4. Lệnh tca và nhatnam ──────────────────────────────────────────────────
+
+step "Tạo lệnh"
+chmod +x "$TCA_DIR/src/cli.js" 2>/dev/null || true
+
+if in_termux; then
+  BIN="$PREFIX/bin"
+else
+  # Trên máy tính: chỗ nào trong PATH và ghi được thì dùng.
+  BIN="$HOME/.local/bin"
+  mkdir -p "$BIN"
+fi
+mkdir -p "$BIN"
+
+ln -sf "$TCA_DIR/src/cli.js" "$BIN/tca"
+# 'nhatnam' không tham số = khởi động agent. Gõ nhanh, và đó là lệnh duy nhất
+# người dùng cần nhớ.
+cat > "$BIN/nhatnam" <<EOF
+#!/usr/bin/env sh
+# Do install.sh tạo. Không tham số = khởi động agent.
 if [ "\$#" -eq 0 ]; then
   exec node "$TCA_DIR/src/cli.js" serve
 else
   exec node "$TCA_DIR/src/cli.js" "\$@"
 fi
 EOF
-chmod +x "$PREFIX/bin/nhatnam"
-ok "Lệnh 'tca' đã sẵn sàng: $(command -v tca || echo "$PREFIX/bin/tca")"
-ok "Gõ 'nhatnam' (không tham số) để khởi động agent ngay"
+chmod +x "$BIN/nhatnam"
+ok "tca + nhatnam → $BIN"
+case ":$PATH:" in
+  *":$BIN:"*) ;;
+  *) warn "$BIN chưa có trong PATH. Thêm vào ~/.bashrc: export PATH=\"\$PATH:$BIN\"" ;;
+esac
 
-# ── 4. Xin quyền Shared Storage (để Termux đọc ghi thư mục Downloads) ───────
-step "Kiểm tra Shared Storage"
-if [ ! -d "$HOME/storage/shared" ]; then
-  warn "Chưa cấp quyền lưu trữ. Đang xin quyền..."
-  termux-setup-storage
-  sleep 2
-else
-  ok "Shared storage đã được cấp quyền"
+# ─── 5. Thư mục làm việc ─────────────────────────────────────────────────────
+
+step "Thư mục làm việc"
+WORKSPACE="${TCA_WORKSPACE:-$HOME/projects}"
+mkdir -p "$WORKSPACE"
+ok "$WORKSPACE"
+# Có git thì một lần sửa sai của agent chỉ cách bạn một lệnh 'git checkout --'.
+if command -v git >/dev/null && [ ! -d "$WORKSPACE/.git" ]; then
+  git -C "$WORKSPACE" init -q 2>/dev/null && info "đã git init (để hoàn tác được khi agent sửa sai)" || true
 fi
 
-# ── 5. Wake lock (ngăn Android kill tiến trình khi khoá màn hình) ────────────
-step "Bật Wake Lock"
-if command -v termux-wake-lock &>/dev/null; then
-  termux-wake-lock
-  ok "Wake lock đã bật (daemon không bị Android kill)"
-else
-  warn "termux-wake-lock không có. Cài Termux:API app + 'pkg install termux-api'"
-fi
+# ─── 6. Quyền bộ nhớ ─────────────────────────────────────────────────────────
 
-# ── 6. Tự động detect API key trong environment ──────────────────────────────
-step "Kiểm tra API keys trong môi trường"
-# Hỏi thẳng src/providers.js thay vì tự liệt kê tên biến: danh sách env var
-# nằm ở một chỗ duy nhất nên không bao giờ lệch (GEMINI_API_KEY, ZAI_API_KEY, …).
-DETECTED="$(node --input-type=module -e \
-  "import { detectFromEnv } from './src/providers.js'; console.log(detectFromEnv().map((e) => e.envName).join(', '));" \
-  2>/dev/null || true)"
-
-if [ -n "$DETECTED" ]; then
-  ok "Tìm thấy API key: $DETECTED"
-  ok "Sẽ được tự động cấu hình khi chạy 'tca serve'"
-else
-  warn "Không thấy API key nào trong environment."
-  warn "Bạn sẽ cấu hình provider trong web UI sau."
-  warn "Hoặc export key trước, ví dụ:"
-  warn "  export ANTHROPIC_API_KEY=sk-ant-..."
-fi
-
-# ── 7. Chạy doctor check ─────────────────────────────────────────────────────
-step "Kiểm tra hệ thống (tca doctor)"
-# doctor trả exit code 1 khi còn việc cần sửa; đó là thông tin, không phải lỗi
-# cài đặt, nên đừng để 'set -e' dừng script ở đây.
-tca doctor || true
-
-# ── 8. Hỏi có muốn setup ADB không ─────────────────────────────────────────
-step "ADB Privilege Setup (tuỳ chọn - khuyên dùng)"
-echo ""
-echo "  ADB setup sẽ unlock các giới hạn Android:"
-echo "    - Phantom process limit (ngăn Android kill shell commands của agent)"
-echo "    - Doze whitelist (agent không bị Android tắt khi khoá màn hình)"
-echo "    - Background activity + wake lock cho Termux"
-echo ""
-if ask "  Bạn có muốn setup ADB ngay bây giờ không? [y/N] "; then
-  # adb-setup hỏi qua readline trên stdin, nên phải nối nó vào terminal thật.
-  if [ -r /dev/tty ]; then
-    tca adb-setup < /dev/tty || warn "ADB setup chưa xong. Chạy lại sau bằng: tca adb-setup"
+if in_termux; then
+  step "Quyền bộ nhớ"
+  if [ -d "$HOME/storage/shared" ]; then
+    ok "đã được cấp"
   else
-    warn "Không có terminal để chạy adb-setup. Chạy sau bằng: tca adb-setup"
+    info "đang xin quyền — bấm Cho phép trên hộp thoại Android"
+    termux-setup-storage >/dev/null 2>&1 || true
+    sleep 3
+    if [ -d "$HOME/storage/shared" ]; then
+      ok "đã được cấp"
+    else
+      warn "chưa được cấp — config sẽ nằm ở ~/.tca/config.json (vẫn chạy bình thường)"
+      warn "cấp sau bằng: termux-setup-storage"
+    fi
   fi
-else
-  warn "Bỏ qua ADB setup. Có thể chạy sau bất kỳ lúc nào bằng: tca adb-setup"
 fi
 
-# ── 9. Tạo alias tiện lợi ────────────────────────────────────────────────────
-step "Thêm alias hữu ích vào ~/.bashrc"
-BASHRC="$HOME/.bashrc"
-if ! grep -q "# tca aliases" "$BASHRC" 2>/dev/null; then
-  cat >> "$BASHRC" << 'EOF'
+# ─── 7. Service tự sống lại ──────────────────────────────────────────────────
 
-# tca aliases
-alias tca-start='tca serve'
-alias tca-url='tca token'
-alias tca-adb='tca adb-setup'
-# Mở URL trong trình duyệt Termux (nếu có termux-open-url)
-alias tca-open='tca-start & sleep 2 && termux-open-url "$(tca token)" 2>/dev/null || echo "Mở: $(tca token)"'
+if in_termux && command -v sv >/dev/null; then
+  step "Service tự khởi động lại"
+  SV_DIR="$PREFIX/var/service/tca"
+  mkdir -p "$SV_DIR/log"
+  cat > "$SV_DIR/run" <<EOF
+#!$PREFIX/bin/sh
+# Do install.sh tạo.
+exec 2>&1
+cd "$TCA_DIR"
+exec node "$TCA_DIR/src/cli.js" serve
 EOF
-  ok "Đã thêm aliases: tca-start, tca-url, tca-adb, tca-open"
-else
-  ok "Aliases đã tồn tại trong ~/.bashrc"
+  cat > "$SV_DIR/log/run" <<EOF
+#!$PREFIX/bin/sh
+mkdir -p "$PREFIX/var/log/tca"
+exec svlogd -tt "$PREFIX/var/log/tca"
+EOF
+  chmod +x "$SV_DIR/run" "$SV_DIR/log/run"
+  ok "đã cài service (daemon sống lại nếu Android kill Termux)"
+  info "bật:  sv-enable tca      ·  log:  tail -f $PREFIX/var/log/tca/current"
+  info "wake lock giờ do chính 'tca serve' tự giữ, không cần bước riêng"
 fi
 
-# ── Done ─────────────────────────────────────────────────────────────────────
+# ─── 8. Tạo config lần đầu ───────────────────────────────────────────────────
+
+step "Cấu hình"
+node "$TCA_DIR/src/cli.js" token >/dev/null 2>&1 || true
+ok "đã tạo config"
+
+# ─── 9. Xong ─────────────────────────────────────────────────────────────────
+
 echo ""
-echo -e "${BOLD}${GREEN}✓ Setup hoàn tất!${RESET}"
+echo -e "${BOLD}${GREEN}  ✓ Cài đặt hoàn tất${RESET}"
 echo ""
-echo -e "  ${BOLD}Khởi động TCA:${RESET}"
-echo "    tca serve"
+if in_termux; then
+  echo -e "  ${BOLD}Gõ:${RESET}  ${BOLD}${GREEN}nhatnam${RESET}"
+  echo ""
+  info "rồi mở đường link nó in ra trong Chrome."
+  info "Mở tab Power trong web UI để cấp thêm quyền cho agent mạnh nhất."
+else
+  echo -e "  ${BOLD}Gõ:${RESET}  ${BOLD}${GREEN}tca serve${RESET}"
+  echo ""
+  info "rồi mở đường link nó in ra trong trình duyệt."
+fi
 echo ""
-echo -e "  ${BOLD}Xem URL truy cập:${RESET}"
-echo "    tca token"
-echo ""
-echo -e "  ${BOLD}Mở trong trình duyệt (sau khi start):${RESET}"
-echo "    termux-open-url \"\$(tca token)\""
-echo ""
-echo -e "  ${BOLD}Chạy tác vụ từ terminal:${RESET}"
-echo "    tca run \"viết cho tôi một hello world bằng Python\""
-echo ""
-echo -e "  ${BOLD}Kiểm tra hệ thống:${RESET}"
-echo "    tca doctor"
-echo ""
-warn "Mở một tab Termux mới (hoặc chạy 'source ~/.bashrc') để dùng các alias vừa thêm."
