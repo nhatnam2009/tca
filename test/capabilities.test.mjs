@@ -676,3 +676,50 @@ test("nothing probes for a binary by spawning a process any more", () => {
   assert.doesNotMatch(src, /execFileSync/, "the sync spawn was only there for which");
   assert.match(src, /export function findBinary/, "PATH walking should be the one implementation");
 });
+
+test("every external command in install.sh has its stdin closed", () => {
+  // The bug this prevents killed an install on the device and left no trace.
+  //
+  // install.sh runs as `curl ... | bash`, so its stdin *is* the part of the script
+  // bash has not read yet. Anything that reads stdin eats the rest of the script,
+  // and bash does not complain - it simply runs out of text and exits 0. The
+  // device printed "==> Tao lenh" and stopped: four steps gone, no error, no exit
+  // code. And not every time, because how much gets eaten depends on buffering
+  // and how far curl has streamed, so the run before it finished normally.
+  //
+  // `</dev/null` makes it impossible. This test is here because the fix is 22
+  // easily-forgotten redirects, and the failure it prevents is silent.
+  const sh = fs.readFileSync(path.join(HERE, "..", "install.sh"), "utf8");
+  const lines = sh.split("\n");
+
+  // The generated `nhatnam` wrapper and boot script must NOT close stdin: the
+  // whole point of them is to run an interactive agent. They live inside heredocs.
+  let inHeredoc = false;
+  const offenders = [];
+
+  for (const [i, raw] of lines.entries()) {
+    const line = raw.trim();
+    if (/<<'?[A-Z]+'?$/.test(line)) inHeredoc = true;
+    else if (/^(EOF|DIAG|FAKE)$/.test(line)) inHeredoc = false;
+    if (inHeredoc || line.startsWith("#") || !line) continue;
+
+    // Only the commands that actually read stdin, and only where they start a
+    // statement - not where they appear inside a quoted message.
+    const risky = /(^|[;&|(]\s*|\bif\s+!?\s*|\b(?:then|else|do)\s+|="?\$\()\s*(apt-get|dpkg|termux-setup-storage)\s/;
+    const isGitClone = /(^|[;&|(=]\s*|\bif\s+)\s*(?:out="\$\()?git clone\s/.test(line);
+    if (!risky.test(line) && !isGitClone) continue;
+    // A message about a command is not a command.
+    if (/^(warn|info|ok|die|echo|step)\s/.test(line)) continue;
+    // Continuation lines carry the redirect on a later line.
+    if (line.endsWith("\\")) continue;
+
+    if (!line.includes("</dev/null")) offenders.push(`${i + 1}: ${line}`);
+  }
+
+  assert.deepEqual(offenders, [], `these could eat the script from stdin:\n${offenders.join("\n")}`);
+
+  // And a count, so deleting the redirects wholesale fails loudly rather than
+  // leaving a test that passes because it stopped matching anything.
+  const redirects = (sh.match(/<\/dev\/null/g) || []).length;
+  assert.ok(redirects >= 20, `expected the redirects to still be there, found ${redirects}`);
+});

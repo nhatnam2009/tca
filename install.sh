@@ -16,10 +16,26 @@
 # Hoặc nếu đã có source:
 #   bash install.sh
 #
-# Script này KHÔNG hỏi gì cả. Mọi thứ tương tác (ghép nối ADB, Shizuku, chọn
-# model) đã chuyển vào web UI, vì bấm nút trên điện thoại dễ hơn gõ lệnh nhiều.
+# Script này KHÔNG hỏi gì cả, và cũng không có gì để hỏi: việc duy nhất cần
+# người là ghép nối ADB, và `nhatnam` hỏi việc đó lúc khởi động lần đầu.
 #
 # Chạy lại bao nhiêu lần cũng được: mọi bước đều idempotent, không xoá gì.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# MỌI lệnh ngoài trong file này phải có `</dev/null`. Không phải để cho gọn.
+#
+# Script này chạy bằng `curl … | bash`, nên **stdin của nó chính là phần script
+# chưa đọc tới**. Bất kỳ lệnh nào đọc stdin sẽ ăn mất đoạn script còn lại, và
+# bash không báo lỗi gì cả — nó chỉ đơn giản hết chữ để chạy rồi thoát êm.
+#
+# Đúng như thế đã xảy ra trên máy thật: apt cài xong, libcurl sửa xong, clone
+# xong, in ra `==> Tạo lệnh` rồi im lặng dừng luôn. Không lỗi, không exit code,
+# chỉ là bốn bước cuối biến mất. Và nó không xảy ra mọi lần — ăn được bao nhiêu
+# còn tuỳ buffer và tuỳ curl đã stream tới đâu, nên lần chạy trước đó vẫn xong
+# bình thường. Một lỗi mà chạy lại là hết thì rất khó truy.
+#
+# `</dev/null` làm chuyện đó thành không thể. Rẻ, và không có mặt trái.
+# ─────────────────────────────────────────────────────────────────────────────
 # =============================================================================
 
 set -uo pipefail
@@ -94,7 +110,7 @@ DIAG
 # một thông báo cho trường hợp này.
 apt_broken() {
   local out
-  out="$(apt-get --version 2>&1)" && return 1
+  out="$(apt-get --version 2>&1 </dev/null)" && return 1
   case "$out" in
     *"CANNOT LINK EXECUTABLE"* | *"cannot locate symbol"* | *"library"*"not found"*) return 0 ;;
   esac
@@ -141,7 +157,7 @@ repair_broken_apt() {
   for attempt in 1 2 3 4; do
     apt_broken || { rm -rf "$tmp"; return 0; }
 
-    lib="$(apt-get --version 2>&1 | sed -n 's/.*library "\([^"]*\)" not found.*/\1/p' | head -1)"
+    lib="$(apt-get --version 2>&1 </dev/null | sed -n 's/.*library "\([^"]*\)" not found.*/\1/p' | head -1)"
     [ -n "$lib" ] || break
     info "thiếu thư viện $lib — đang thử tự sửa (lần $attempt)"
 
@@ -157,7 +173,7 @@ repair_broken_apt() {
     fi
 
     # (2) Tải gói về và đặt bằng dpkg.
-    if ! command -v dpkg >/dev/null 2>&1 || ! dpkg --version >/dev/null 2>&1; then
+    if ! command -v dpkg >/dev/null 2>&1 || ! dpkg --version >/dev/null 2>&1 </dev/null; then
       warn "dpkg cũng không chạy được, không tự sửa tiếp được"
       break
     fi
@@ -173,7 +189,7 @@ repair_broken_apt() {
       info "đang tải danh sách gói để tìm $pkg…"
       curl -fsSL --retry 2 --connect-timeout 20 \
         "https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-$arch/Packages.gz" \
-        2>/dev/null | gzip -dc >"$index" 2>/dev/null || true
+        </dev/null 2>/dev/null | gzip -dc >"$index" 2>/dev/null || true
     fi
     if [ ! -s "$index" ]; then
       warn "không tải được danh sách gói (mạng?)"
@@ -201,11 +217,11 @@ repair_broken_apt() {
 
     url="https://packages.termux.dev/apt/termux-main/$deb"
     info "đang tải $pkg…"
-    if ! curl -fsSL --retry 2 --connect-timeout 20 -o "$tmp/pkg.deb" "$url" 2>/dev/null; then
+    if ! curl -fsSL --retry 2 --connect-timeout 20 -o "$tmp/pkg.deb" "$url" </dev/null 2>/dev/null; then
       warn "tải $pkg thất bại"
       break
     fi
-    if dpkg -i --force-confold "$tmp/pkg.deb" >/dev/null 2>&1; then
+    if dpkg -i --force-confold "$tmp/pkg.deb" </dev/null >/dev/null 2>&1; then
       ok "đã đặt lại $pkg"
     else
       warn "dpkg không đặt được $pkg"
@@ -220,7 +236,7 @@ repair_broken_apt() {
 
 die_apt_broken() {
   echo -e "\n${RED}✗ apt của Termux đã hỏng, và tự sửa không được.${RESET}" >&2
-  apt-get --version 2>&1 | head -1 | sed 's/^/    /' >&2
+  apt-get --version 2>&1 </dev/null | head -1 | sed 's/^/    /' >&2
   cat >&2 <<'DIAG'
 
   Một lần `pkg upgrade` đã đứt giữa đường: libapt-pkg lên bản mới nhưng thư viện
@@ -248,9 +264,10 @@ echo -e "${RESET}"
 if in_termux; then
   step "Cài gói hệ thống"
 
-  # apt sẽ hỏi "sources.list đã bị sửa, giữ bản nào?" và khi script được pipe
-  # vào bash thì stdin là chính script, nên dpkg nhận EOF rồi bỏ dở gói apt.
-  # --force-confold = luôn giữ file của bạn, không hỏi.
+  # apt sẽ hỏi "sources.list đã bị sửa, giữ bản nào?", nên --force-confold =
+  # luôn giữ file của bạn, không hỏi. Đó là nửa còn lại của vấn đề stdin ở đầu
+  # file: nửa này lo việc apt ĐỪNG hỏi, `</dev/null` lo việc nếu nó có hỏi thì
+  # cũng không ăn mất script.
   export DEBIAN_FRONTEND=noninteractive
   KEEP=(-o "Dpkg::Options::=--force-confold" -o "Dpkg::Options::=--force-confdef")
 
@@ -260,10 +277,10 @@ if in_termux; then
   apt_broken && { repair_broken_apt || die_apt_broken; }
 
   # Hoàn tất gói cài dở từ lần trước (no-op nếu không có gì dở dang).
-  dpkg --configure -a --force-confold >/dev/null 2>&1 || true
+  dpkg --configure -a --force-confold </dev/null >/dev/null 2>&1 || true
 
   info "đang cập nhật danh sách gói…"
-  apt-get update -y "${KEEP[@]}" >/dev/null 2>&1 || warn "apt update không xong, vẫn thử tiếp"
+  apt-get update -y "${KEEP[@]}" </dev/null >/dev/null 2>&1 || warn "apt update không xong, vẫn thử tiếp"
 
   # Nâng cấp TOÀN BỘ trước khi cài bất cứ gì. Đây là quy tắc số một của Termux:
   # cài lẻ một gói trên hệ thống cũ sẽ kéo về bản mới link tới symbol chưa có
@@ -275,7 +292,7 @@ if in_termux; then
   # PIPESTATUS, không phải $?: qua `| tail` thì $? là mã thoát của tail và luôn
   # bằng 0, nên nhánh lỗi ở đây trước giờ gần như không bao giờ chạy — một lần
   # upgrade thất bại vẫn đi tiếp như thể mọi thứ ổn.
-  apt-get upgrade -y "${KEEP[@]}" 2>&1 | tail -25
+  apt-get upgrade -y "${KEEP[@]}" </dev/null 2>&1 | tail -25
   upgrade_rc="${PIPESTATUS[0]}"
 
   # Kiểm ngay tại đây, vì đây đúng là chỗ apt hay tự giết mình. Bắt ở đây thì
@@ -362,7 +379,7 @@ DIAG
   # mỗi file .deb kèm số byte ở cột 3, cộng lại là con số thật sẽ tải về.
   info "đang tính dung lượng cần tải…"
   bytes="$(
-    apt-get install -y --print-uris "${KEEP[@]}" "${WANT[@]}" 2>/dev/null |
+    apt-get install -y --print-uris "${KEEP[@]}" "${WANT[@]}" </dev/null 2>/dev/null |
       awk '{ if ($3 ~ /^[0-9]+$/) total += $3 } END { print total + 0 }'
   )"
   case "$bytes" in '' | *[!0-9]*) bytes=0 ;; esac
@@ -370,7 +387,7 @@ DIAG
   # Chỗ chiếm thêm sau khi giải nén thì chỉ `-s` biết, và dòng đó có hay không
   # cũng không sao — nó chỉ là phần thêm vào câu.
   disk="$(
-    apt-get install -y -s "${KEEP[@]}" "${WANT[@]}" 2>/dev/null |
+    apt-get install -y -s "${KEEP[@]}" "${WANT[@]}" </dev/null 2>/dev/null |
       sed -n 's/^After this operation, \(.*\) of additional disk space.*/\1/p'
   )"
 
@@ -386,12 +403,12 @@ DIAG
   # hẳn so với gọi lại từng gói. Chỉ khi cả lượt fail mới xuống từng gói, để một
   # gói lỗi không kéo theo cả phần còn lại.
   info "đang cài ${#WANT[@]} gói: ${WANT[*]}"
-  apt-get install -y "${KEEP[@]}" "${WANT[@]}" 2>&1 | tail -15
+  apt-get install -y "${KEEP[@]}" "${WANT[@]}" </dev/null 2>&1 | tail -15
   install_rc="${PIPESTATUS[0]}"
   if [ "$install_rc" -ne 0 ]; then
     warn "cài cả lượt thất bại (mã $install_rc), thử từng gói…"
     for pkg in "${WANT[@]}"; do
-      apt-get install -y "${KEEP[@]}" "$pkg" >/dev/null 2>&1 && ok "$pkg" || warn "$pkg thất bại"
+      apt-get install -y "${KEEP[@]}" "$pkg" </dev/null >/dev/null 2>&1 && ok "$pkg" || warn "$pkg thất bại"
     done
   fi
 
@@ -488,7 +505,7 @@ fetch_source() {
 
   if command -v git >/dev/null 2>&1; then
     info "đang clone $repo…"
-    if out="$(git clone --depth 1 "$repo" "$dest" 2>&1)"; then
+    if out="$(git clone --depth 1 "$repo" "$dest" 2>&1 </dev/null)"; then
       ok "đã clone vào $dest"
       return 0
     fi
@@ -515,8 +532,8 @@ fetch_source() {
           if [ -d "$dest/.git" ] && [ ! -e "$dest/src/cli.js" ]; then
             rm -rf "$dest"
           fi
-          if apt-get install -y --reinstall "${KEEP[@]}" libcurl >/dev/null 2>&1 &&
-            out="$(git clone --depth 1 "$repo" "$dest" 2>&1)"; then
+          if apt-get install -y --reinstall "${KEEP[@]}" libcurl </dev/null >/dev/null 2>&1 &&
+            out="$(git clone --depth 1 "$repo" "$dest" 2>&1 </dev/null)"; then
             ok "đã cài lại libcurl và clone vào $dest"
             return 0
           fi
@@ -546,7 +563,7 @@ fetch_source() {
   tmp="${TMPDIR:-/tmp}/tca-src.$$"
   mkdir -p "$tmp" || die "không tạo được thư mục tạm"
 
-  if ! curl -fsSL --retry 2 --connect-timeout 30 -o "$tmp/src.tar.gz" "$tarurl" 2>"$tmp/curl.err"; then
+  if ! curl -fsSL --retry 2 --connect-timeout 30 -o "$tmp/src.tar.gz" "$tarurl" </dev/null 2>"$tmp/curl.err"; then
     warn "tải tarball cũng thất bại:"
     tail -3 "$tmp/curl.err" 2>/dev/null | sed 's/^/      /' >&2
     rm -rf "$tmp"
@@ -596,7 +613,7 @@ else
   TCA_DIR="$HOME/tca"
   if [ -d "$TCA_DIR/.git" ]; then
     info "đang cập nhật $TCA_DIR…"
-    if pull_out="$(git -C "$TCA_DIR" pull --ff-only 2>&1)"; then
+    if pull_out="$(git -C "$TCA_DIR" pull --ff-only 2>&1 </dev/null)"; then
       ok "đã cập nhật"
     else
       warn "pull không xong, dùng bản đang có:"
@@ -651,7 +668,7 @@ mkdir -p "$WORKSPACE"
 ok "$WORKSPACE"
 # Có git thì một lần sửa sai của agent chỉ cách bạn một lệnh 'git checkout --'.
 if command -v git >/dev/null && [ ! -d "$WORKSPACE/.git" ]; then
-  git -C "$WORKSPACE" init -q 2>/dev/null && info "đã git init (để hoàn tác được khi agent sửa sai)" || true
+  git -C "$WORKSPACE" init -q </dev/null 2>/dev/null && info "đã git init (để hoàn tác được khi agent sửa sai)" || true
 fi
 
 # ─── 6. Quyền bộ nhớ ─────────────────────────────────────────────────────────
@@ -662,7 +679,7 @@ if in_termux; then
     ok "đã được cấp"
   else
     info "đang xin quyền — bấm Cho phép trên hộp thoại Android"
-    termux-setup-storage >/dev/null 2>&1 || true
+    termux-setup-storage </dev/null >/dev/null 2>&1 || true
     sleep 3
     if [ -d "$HOME/storage/shared" ]; then
       ok "đã được cấp"
@@ -700,7 +717,7 @@ fi
 # ─── 8. Tạo config lần đầu ───────────────────────────────────────────────────
 
 step "Cấu hình"
-node "$TCA_DIR/src/cli.js" token >/dev/null 2>&1 || true
+node "$TCA_DIR/src/cli.js" token </dev/null >/dev/null 2>&1 || true
 ok "đã tạo config"
 
 # ─── 9. Xong ─────────────────────────────────────────────────────────────────

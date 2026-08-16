@@ -281,6 +281,16 @@ These cost more debugging time than anything in the code:
   silently stopped taking a wake lock. `findBinary()` in `src/privilege.js` walks
   `PATH` itself now — no subprocess, no dependency, same answer everywhere.
   `install.sh` never hit this because shell scripts can use the builtin.
+- **`curl … | bash` makes the script its own stdin.** Everything the installer runs
+  has `</dev/null` on it, and that is load-bearing. Bash reads a piped script
+  lazily, so any command that reads stdin consumes the part not executed yet —
+  and bash does not report that. It runs out of text and exits 0. On the device
+  this printed `==> Tạo lệnh` and stopped: the last four steps simply gone, no
+  error, no failing exit code, and *not on every run*, because how much gets eaten
+  depends on buffering and how far curl has streamed. A test enforces the
+  redirects, since the fix is 22 easy-to-forget characters guarding a silent
+  failure. The generated `nhatnam` wrapper deliberately keeps its stdin — it has a
+  question to ask.
 - **`/bin/sh` does not exist.** Termux keeps its userland in `$PREFIX` and the
   system shell is `/system/bin/sh`. `pickShell()` in `src/tools.js` probes for a
   real one.
