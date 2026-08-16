@@ -268,6 +268,7 @@ if in_termux; then
   # luôn giữ file của bạn, không hỏi. Đó là nửa còn lại của vấn đề stdin ở đầu
   # file: nửa này lo việc apt ĐỪNG hỏi, `</dev/null` lo việc nếu nó có hỏi thì
   # cũng không ăn mất script.
+  export TERMUX_APP_PACKAGE_MANAGER="${TERMUX_APP_PACKAGE_MANAGER:-apt}"
   export DEBIAN_FRONTEND=noninteractive
   KEEP=(-o "Dpkg::Options::=--force-confold" -o "Dpkg::Options::=--force-confdef")
 
@@ -318,7 +319,7 @@ DIAG
   # Mọi thứ agent cần, cài một lượt. Không còn tab "Sức mạnh" để bấm cài lẻ về
   # sau, nên chỗ này phải cài cho đủ — một lần cài xong là dùng được hết.
   #
-  #   nodejs git            bắt buộc
+  #   nodejs git libcurl ca-certificates  bắt buộc
   #   bash                  shell agent chạy lệnh trong đó
   #   ripgrep               lo cả grep và glob, nhanh hơn đọc file bằng JS nhiều lần
   #   jq                    nhiều lệnh agent hay dùng cần nó
@@ -326,7 +327,7 @@ DIAG
   #   termux-api            wake lock + thông báo khi agent xong việc
   #   termux-services       chạy nền qua sv
   #   android-tools         adb — cần cho ghép nối không dây ở bước sau
-  REQUIRED=(nodejs git)
+  REQUIRED=(nodejs git libcurl ca-certificates)
   TOOLS=(bash ripgrep jq openssh termux-api termux-services android-tools)
 
   # Nặng, và chỉ cần khi bạn muốn agent chạy/biên dịch code người khác:
