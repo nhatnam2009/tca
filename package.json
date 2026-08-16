@@ -1,0 +1,25 @@
+{
+  "name": "tca",
+  "version": "0.1.0",
+  "description": "Coding agent with web UI, built to run on Termux. Zero runtime dependencies.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "tca": "./src/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/cli.js serve",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.mjs",
+    "seed": "node tools/gen-seed.mjs"
+  },
+  "dependencies": {},
+  "//devDependencies": "Dev machine only, for `npm run typecheck`. The phone never installs these; the runtime has zero dependencies.",
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "typescript": "5.9.3"
+  }
+}

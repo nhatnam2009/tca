@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>tca &middot; coding agent</title>
+    <!--
+      interactive-widget=resizes-content makes Chrome/Android shrink the layout
+      viewport (and therefore 100dvh) when the on-screen keyboard opens, so the
+      composer stays visible instead of being covered.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0f1115" />
+    <meta name="referrer" content="no-referrer" />
+    <!-- empty icon: avoids a pointless /favicon.ico request while offline -->
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#composer-input">Skip to message composer</a>
+
+    <!-- ============================================================ token gate -->
+    <section id="token-gate" class="gate" aria-labelledby="gate-title" hidden>
+      <form id="token-form" class="gate-card" autocomplete="off">
+        <h1 id="gate-title">Access token needed</h1>
+        <p class="muted">
+          The daemon prints a URL like
+          <code>http://127.0.0.1:8787/?token=&hellip;</code> when it starts.
+          Open that URL, or paste just the token here.
+        </p>
+        <label for="token-input">Access token</label>
+        <input
+          id="token-input"
+          name="token"
+          type="password"
+          inputmode="text"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          required
+          aria-describedby="token-error"
+        />
+        <p id="token-error" class="error-text" role="alert" hidden></p>
+        <button type="submit" class="btn primary block">Save token</button>
+      </form>
+    </section>
+
+    <div id="app" class="app" hidden>
+      
+      <!-- ============================================================== tabs -->
+      <nav id="tabbar" class="sidebar" role="tablist" aria-label="Sections">
+        <div class="sidebar-header">
+          <h2>TCA Agent</h2>
+        </div>
+        <div class="sidebar-nav">
+
+        <button
+          id="tab-chat"
+          class="tab"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="panel-chat"
+        >
+          Chat
+        </button>
+        <button
+          id="tab-settings"
+          class="tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-settings"
+          tabindex="-1"
+        >
+          Settings
+        </button>
+              </div>
+      </nav>
+
+      <main class="workspace">
+<!-- ============================================================ wizard -->
+      <!--
+        Shown instead of the chat when no provider is configured yet. A beginner
+        must never land in a composer that can only produce an error.
+      -->
+      <section
+        id="panel-wizard"
+        class="panel wizard"
+        aria-labelledby="wizard-title"
+        hidden
+      >
+        <header class="wizard-head">
+          <h1 id="wizard-title" class="h1">Set up a model</h1>
+          <ol id="wizard-steps" class="steps">
+            <li id="wizard-tick-1" class="step">Model</li>
+            <li id="wizard-tick-2" class="step">Key</li>
+            <li id="wizard-tick-3" class="step">Model id</li>
+            <li id="wizard-tick-4" class="step">Test</li>
+          </ol>
+          <p
+            id="wizard-status"
+            class="meta muted"
+            role="status"
+            aria-live="polite"
+          ></p>
+        </header>
+
+        <div class="wizard-body">
+          <!-- ---------------------------------------------------- step 1 -->
+          <div id="wizard-1" class="wstep">
+            <h2 class="h2">Choose a model</h2>
+            <p class="muted small">
+              Tap one. Nothing is saved until the last step.
+            </p>
+            <div id="wiz-recommended" class="cards"></div>
+            <button
+              id="btn-show-all-providers"
+              class="btn block"
+              type="button"
+              aria-expanded="false"
+              aria-controls="wiz-all"
+            >
+              Show all providers
+            </button>
+            <div id="wiz-all" class="cards" hidden></div>
+          </div>
+
+          <!-- ---------------------------------------------------- step 2 -->
+          <div id="wizard-2" class="wstep" hidden>
+            <h2 class="h2">Paste your API key</h2>
+            <p id="wiz-chosen-2" class="chosen"></p>
+            <p id="wiz-provider-note" class="muted small"></p>
+            <p id="wiz-key-link" class="small"></p>
+
+            <div id="wiz-other-fields" hidden>
+              <label for="wiz-label">Name for this provider</label>
+              <input
+                id="wiz-label"
+                type="text"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                placeholder="custom"
+                aria-describedby="wiz-label-hint"
+              />
+              <p id="wiz-label-hint" class="muted small">
+                Used as the key in the config file.
+              </p>
+
+              <label for="wiz-baseurl">Base URL</label>
+              <input
+                id="wiz-baseurl"
+                type="url"
+                inputmode="url"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                placeholder="https://host/v1"
+              />
+
+              <label for="wiz-kind">API kind</label>
+              <select id="wiz-kind">
+                <option value="openai">openai (OpenAI-compatible)</option>
+                <option value="anthropic">anthropic</option>
+              </select>
+            </div>
+
+            <label for="wiz-apikey">API key</label>
+            <div class="row">
+              <input
+                id="wiz-apikey"
+                class="grow"
+                type="password"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                aria-describedby="wiz-key-hint"
+              />
+              <button
+                id="btn-wiz-toggle-key"
+                class="btn"
+                type="button"
+                aria-pressed="false"
+              >
+                Show
+              </button>
+            </div>
+            <p id="wiz-key-hint" class="muted small">
+              Stored in the config file. You can also enter
+              <code>${ENV_NAME}</code> to read it from an environment variable
+              instead.
+            </p>
+            <p id="wiz-key-warning" class="warn small" role="status" hidden></p>
+          </div>
+
+          <!-- ---------------------------------------------------- step 3 -->
+          <div id="wizard-3" class="wstep" hidden>
+            <h2 class="h2">Pick a model</h2>
+            <p id="wiz-chosen-3" class="chosen"></p>
+
+            <div id="wiz-local-fields" hidden>
+              <label for="wiz-local-baseurl">Server URL</label>
+              <input
+                id="wiz-local-baseurl"
+                type="url"
+                inputmode="url"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                aria-describedby="wiz-local-hint"
+              />
+              <p id="wiz-local-hint" class="muted small">
+                Use your computer&rsquo;s LAN address to drive a desktop GPU from
+                the phone.
+              </p>
+              <button id="btn-wiz-live" class="btn block" type="button">
+                Ask the server which models it has
+              </button>
+            </div>
+
+            <label for="wiz-model-select">Models</label>
+            <select id="wiz-model-select"></select>
+
+            <label for="wiz-model">Model id</label>
+            <input
+              id="wiz-model"
+              type="text"
+              list="wiz-model-list"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              aria-describedby="wiz-model-note"
+            />
+            <datalist id="wiz-model-list"></datalist>
+            <p id="wiz-model-note" class="muted small"></p>
+          </div>
+
+          <!-- ---------------------------------------------------- step 4 -->
+          <div id="wizard-4" class="wstep" hidden>
+            <h2 class="h2">Test and finish</h2>
+            <dl id="wiz-summary" class="summary"></dl>
+            <button id="btn-wiz-test" class="btn primary block" type="button">
+              Test connection
+            </button>
+            <p class="muted small">
+              Sends one 1-token request so a wrong key shows up now, not
+              mid-task.
+            </p>
+            <p
+              id="wiz-test-result"
+              class="test-result"
+              role="status"
+              aria-live="polite"
+              hidden
+            ></p>
+          </div>
+        </div>
+
+        <div class="wizard-actions row">
+          <button id="btn-wiz-back" class="btn" type="button">Back</button>
+          <button id="btn-wiz-next" class="btn primary grow" type="button">
+            Next
+          </button>
+        </div>
+        <p class="wizard-escape">
+          <button id="btn-wiz-skip" class="btn link" type="button">
+            Skip, I&rsquo;ll configure it myself
+          </button>
+        </p>
+      </section>
+
+      <!-- ============================================================== chat -->
+      <section
+        id="panel-chat"
+        class="panel"
+        role="tabpanel"
+        aria-labelledby="tab-chat"
+      >
+        <header class="chat-header">
+          <div class="row">
+            <label class="sr-only" for="session-select">Session</label>
+            <select id="session-select" class="grow"></select>
+            <button id="btn-new-session" class="btn" type="button">New</button>
+            <button id="btn-delete-session" class="btn danger" type="button">
+              Delete
+            </button>
+          </div>
+          <p id="chat-meta" class="meta muted"></p>
+          <p id="provider-warning" class="meta warn" role="alert" hidden></p>
+        </header>
+
+        <div
+          id="messages"
+          class="messages"
+          role="log"
+          aria-label="Conversation"
+          aria-live="polite"
+          aria-relevant="additions text"
+          tabindex="0"
+        ></div>
+
+        <div class="composer-wrap">
+          <button id="jump-latest" class="jump" type="button" hidden>
+            Jump to latest
+          </button>
+          <div class="statusbar">
+            <span
+              id="activity"
+              class="activity"
+              aria-hidden="true"
+              hidden
+            ></span>
+            <p id="stream-status" class="status" role="status" aria-live="polite"></p>
+            <button id="btn-stop" class="btn stop danger" type="button" hidden>
+              Stop
+            </button>
+          </div>
+          <form id="composer" class="composer">
+            <label class="sr-only" for="composer-input">Message</label>
+            <textarea
+              id="composer-input"
+              name="text"
+              rows="1"
+              placeholder="Ask the agent to change something&hellip;"
+              autocapitalize="sentences"
+              spellcheck="true"
+              aria-describedby="composer-hint"
+            ></textarea>
+            <button id="btn-send" class="btn primary" type="submit">Send</button>
+            <p id="composer-hint" class="sr-only">
+              Enter inserts a new line. Press the Send button, or Control plus
+              Enter, to send.
+            </p>
+          </form>
+        </div>
+      </section>
+
+      <!-- ========================================================== settings -->
+      <section
+        id="panel-settings"
+        class="panel settings"
+        role="tabpanel"
+        aria-labelledby="tab-settings"
+        hidden
+      >
+        <form id="settings-form" autocomplete="off">
+          <h1 class="h1">Settings</h1>
+
+          <p class="path-note">
+            Config file:
+            <code id="cfg-path" class="path">&hellip;</code>
+          </p>
+          <p class="muted small">
+            This file is plain JSON &mdash; you can also edit it by hand with any
+            text editor and press &ldquo;Reload from disk&rdquo;.
+          </p>
+          <p id="shared-storage-note" class="warn small" hidden></p>
+
+          <fieldset>
+            <legend>Provider</legend>
+
+            <label for="active-provider">Active provider</label>
+            <select id="active-provider"></select>
+
+            <div class="row">
+              <button id="btn-add-provider" class="btn" type="button">
+                Add provider
+              </button>
+              <button id="btn-remove-provider" class="btn danger" type="button">
+                Remove
+              </button>
+            </div>
+
+            <label for="prov-kind">API kind</label>
+            <select id="prov-kind">
+              <option value="anthropic">anthropic</option>
+              <option value="openai">openai (OpenAI-compatible)</option>
+            </select>
+
+            <label for="prov-baseurl">Base URL</label>
+            <input
+              id="prov-baseurl"
+              type="url"
+              inputmode="url"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              placeholder="https://api.anthropic.com"
+            />
+
+            <label for="prov-apikey">API key</label>
+            <div class="row">
+              <input
+                id="prov-apikey"
+                class="grow"
+                type="password"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                aria-describedby="apikey-hint"
+              />
+              <button
+                id="btn-toggle-key"
+                class="btn"
+                type="button"
+                aria-pressed="false"
+              >
+                Show
+              </button>
+            </div>
+            <p id="apikey-hint" class="muted small">
+              Leave untouched to keep the key already stored on the server. You
+              can also enter <code>${ENV_NAME}</code> to read it from an
+              environment variable instead of storing it.
+            </p>
+
+            <label for="model-picker">Model</label>
+            <select id="model-picker" aria-describedby="model-picker-note">
+            </select>
+            <p id="model-picker-note" class="muted small"></p>
+
+            <label for="prov-model">Model id (active)</label>
+            <div class="row">
+              <input
+                id="prov-model"
+                class="grow"
+                type="text"
+                list="model-list"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                aria-describedby="prov-model-hint"
+              />
+              <button id="btn-save-model-id" class="btn" type="button">
+                + Save
+              </button>
+            </div>
+            <datalist id="model-list"></datalist>
+            <p id="prov-model-hint" class="muted small">
+              Catalogs go stale, so any model id you type here is kept as-is.
+              Tap &ldquo;+ Save&rdquo; to keep it in the list below for quick
+              switching, without losing the others.
+            </p>
+            <div id="saved-model-ids" class="chips"></div>
+
+            <div class="row">
+              <button id="btn-test-provider" class="btn" type="button">
+                Test connection
+              </button>
+              <button id="btn-refresh-live" class="btn" type="button">
+                Refresh from provider
+              </button>
+            </div>
+            <p id="provider-test-hint" class="muted small">
+              Test uses the provider as already saved on the server &mdash; save
+              first if you just changed the key.
+            </p>
+            <p
+              id="provider-test-result"
+              class="test-result"
+              role="status"
+              aria-live="polite"
+              hidden
+            ></p>
+
+            <label for="prov-maxtokens">Max output tokens</label>
+            <input
+              id="prov-maxtokens"
+              type="number"
+              min="256"
+              max="200000"
+              step="256"
+              inputmode="numeric"
+            />
+          </fieldset>
+
+          <fieldset>
+            <legend>Model catalog</legend>
+
+            <label for="model-search">Search every provider</label>
+            <input
+              id="model-search"
+              type="search"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              placeholder="kimi, sonnet, qwen&hellip;"
+              aria-describedby="model-search-hint"
+            />
+            <p id="model-search-hint" class="muted small">
+              Finds a model when you know its name but not the vendor.
+            </p>
+            <p id="model-search-note" class="warn small" role="status" hidden></p>
+            <div id="model-search-results" class="hits"></div>
+
+            <p id="catalog-info" class="muted small"></p>
+            <button id="btn-download-catalog" class="btn block" type="button">
+              Download full catalog (3.8 MB)
+            </button>
+            <p class="muted small">
+              The bundled list covers the popular models offline. Downloading the
+              full models.dev catalog uses about 3.8 MB of data.
+            </p>
+          </fieldset>
+
+          <fieldset>
+            <legend>Android status</legend>
+            <p class="muted small">
+              Environment checks &mdash; same as <code>tca doctor</code> in the
+              terminal, including whether the ADB unlocks from
+              <code>tca adb-setup</code> are still applied.
+            </p>
+            <div id="status-list" class="status-list"></div>
+            <button id="btn-recheck-status" class="btn block" type="button">
+              Recheck
+            </button>
+          </fieldset>
+
+          <fieldset>
+            <legend>Agent</legend>
+
+            <label for="cfg-workspace">Workspace directory</label>
+            <input
+              id="cfg-workspace"
+              type="text"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              aria-describedby="workspace-hint"
+            />
+            <p id="workspace-hint" class="muted small">
+              The agent may only read and write inside this directory.
+            </p>
+
+            <div class="check">
+              <input
+                id="cfg-autoapprove"
+                type="checkbox"
+                aria-describedby="autoapprove-hint"
+              />
+              <label for="cfg-autoapprove">Auto-approve shell commands</label>
+            </div>
+            <p id="autoapprove-hint" class="muted small">
+              Off (recommended): the agent asks you before running any shell
+              command. On: it runs commands immediately, without asking.
+            </p>
+
+            <label for="cfg-maxsteps">Max steps per turn</label>
+            <input
+              id="cfg-maxsteps"
+              type="number"
+              min="1"
+              max="500"
+              step="1"
+              inputmode="numeric"
+            />
+
+            <label for="cfg-instructions">Extra instructions</label>
+            <textarea
+              id="cfg-instructions"
+              rows="4"
+              aria-describedby="instructions-hint"
+            ></textarea>
+            <p id="instructions-hint" class="muted small">
+              Appended to the system prompt for every session.
+            </p>
+
+            <label for="cfg-deny">Denied commands</label>
+            <textarea
+              id="cfg-deny"
+              rows="4"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              aria-describedby="deny-hint"
+            ></textarea>
+            <p id="deny-hint" class="muted small">
+              One regular expression per line. Matching commands are always
+              blocked, even with auto-approve on.
+            </p>
+          </fieldset>
+
+          <div class="row sticky-actions">
+            <button id="btn-save-config" class="btn primary grow" type="submit">
+              Save settings
+            </button>
+            <button id="btn-reload-config" class="btn" type="button">
+              Reload from disk
+            </button>
+          </div>
+
+          <p id="version-line" class="muted small"></p>
+        </form>
+      </section>
+      </main>
+
+
+      
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>

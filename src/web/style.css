@@ -1,0 +1,1264 @@
+/* ============================================================================
+   tca web UI styles - mobile first (~390px portrait), centered on desktop.
+   Dark by default; light only when the OS asks for it.
+   ========================================================================= */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #10171f;
+  --bg-2: #131c25;
+  --bg-3: #17212b;
+  --bg-user: rgba(46,132,84,.24);
+  --fg: #edf3f7;
+  --muted: #8d9aa5;
+  --border: rgba(255,255,255,.075);
+  --border-strong: rgba(91,240,154,.28);
+  --accent: #55eda0;
+  --accent-fg: #10171f;
+  --danger: #ff7c86;
+  --ok: #33cf84;
+  --warn: #f2c66b;
+
+  --radius: 12px;
+  --tap: 40px;
+  --gap: 10px;
+  --pad: 14px;
+  --maxw: 900px;
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --shadow: 0 28px 80px rgba(0,0,0,.34);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: radial-gradient(circle at 75% 8%, rgba(85,237,160,.055), transparent 30%), linear-gradient(180deg, #141d26, var(--bg));
+  color: var(--fg);
+  font: 14px/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+
+/* set from JS when visualViewport is available (Android keyboard handling) */
+body.has-vvh {
+  height: var(--vvh);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.sr-only,
+.offscreen {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 20;
+  background: var(--accent);
+  color: var(--accent-fg);
+  padding: 10px 14px;
+  border-radius: 0 0 var(--radius) 0;
+}
+.skip-link:focus {
+  left: 0;
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 0.82rem;
+}
+.warn {
+  color: var(--warn);
+}
+.error-text {
+  color: var(--danger);
+}
+code,
+pre,
+.path {
+  font-family: var(--mono);
+}
+
+/* --------------------------------------------------------------- controls */
+
+.btn {
+  min-height: var(--tap);
+  min-width: var(--tap);
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(255,255,255,.018);
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: 0.15s ease;
+}
+.btn:hover {
+  color: var(--accent);
+  border-color: var(--border-strong);
+  background: rgba(85,237,160,.105);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn.primary {
+  background: linear-gradient(180deg, rgba(85,237,160,.15), rgba(85,237,160,.08));
+  border-color: var(--border-strong);
+  color: #b9ffd4;
+}
+.btn.primary:hover {
+  background: rgba(85,237,160,.18);
+}
+.btn.danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+.btn.small {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.btn.block {
+  width: 100%;
+}
+/* Flex filler. `width: auto` is essential: inputs default to width:100% here,
+   which would otherwise push their row siblings onto a line of their own. */
+.grow {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-2);
+  color: var(--fg);
+  font: inherit;
+  outline: 0;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px rgba(85,237,160,.035);
+}
+textarea {
+  min-height: calc(var(--tap) + 8px);
+  resize: vertical;
+  line-height: 1.4;
+}
+select {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 49%, var(--muted) 51%),
+    linear-gradient(-45deg, transparent 49%, var(--muted) 51%);
+  background-position: calc(100% - 18px) 55%, calc(100% - 12px) 55%;
+  background-size: 6px 6px;
+  background-repeat: no-repeat;
+  padding-right: 34px;
+}
+
+.row {
+  display: flex;
+  gap: var(--gap);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------------- token gate */
+
+.gate {
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  padding: var(--pad);
+  overflow: auto;
+}
+.gate-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  display: grid;
+  gap: var(--gap);
+}
+.gate-card h1 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+.gate-card p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+/* ------------------------------------------------------------ app shell */
+
+.app { min-height: 0; min-width: 0; width: 100%; }
+
+.panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * Flex/grid children default to min-width:auto, so one wide <pre> (long tool
+ * output, a minified line) would push its whole ancestor chain wider than the
+ * screen and shove the buttons off-canvas. Let every wrapper shrink instead, so
+ * the scrolling happens inside the <pre> where it belongs.
+ */
+.messages,
+.composer-wrap,
+.settings,
+.wizard,
+.wizard-body,
+.wstep,
+.cards,
+.card,
+.hits,
+.hit,
+.summary,
+.msg,
+.msg-body,
+.rich,
+.code,
+.tool,
+.tool-body,
+.approval,
+.msg-body > *,
+.rich > *,
+.tool-body > *,
+.approval > * {
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------ chat header */
+
+.chat-header {
+  flex: 0 0 auto;
+  padding: var(--pad);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.chat-header .row {
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.chat-header select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.meta {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------- message list */
+
+.messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+.empty {
+  margin: auto;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.msg {
+  max-width: 92%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.msg.user {
+  align-self: flex-end;
+  background: linear-gradient(180deg, rgba(46,132,84,.24), rgba(39,111,72,.17));
+  border-color: rgba(85,237,160,.23);
+  border-radius: 17px 17px 6px 17px;
+  color: #f1fff6;
+}
+.msg.assistant {
+  align-self: flex-start;
+  border-color: transparent;
+  background: transparent;
+}
+.msg-body {
+  display: grid;
+  gap: 8px;
+}
+.prose {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.msg-footer {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+/* code blocks inside assistant text */
+.code {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-3) 70%, var(--bg));
+}
+.code-lang {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+pre {
+  margin: 0;
+  padding: 10px;
+  overflow-x: auto;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* --------------------------------------------------------------- tool rows */
+
+.tool {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  font-size: 0.85rem;
+}
+.tool > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--tap);
+  padding: 0 10px;
+  cursor: pointer;
+  list-style: none;
+}
+.tool > summary::-webkit-details-marker {
+  display: none;
+}
+.tool-caret {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+.tool[open] .tool-caret {
+  transform: rotate(90deg);
+}
+.tool-name {
+  font-family: var(--mono);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tool-arg {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tool-state {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.tool-state.ok {
+  color: var(--ok);
+}
+.tool-state.bad {
+  color: var(--danger);
+}
+.tool.bad {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+.tool-body {
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+.tool-body pre {
+  max-height: 45vh;
+  overflow: auto;
+  background: var(--bg-2);
+  border-radius: 8px;
+}
+.tool-label {
+  margin: 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------- approval cards */
+
+.approval {
+  align-self: stretch;
+  border: 2px solid var(--warn);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg-2));
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+.approval-title {
+  margin: 0;
+  font-weight: 700;
+  color: var(--warn);
+}
+.approval pre {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 30vh;
+  overflow: auto;
+}
+.approval p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.approval.resolved {
+  border-color: var(--border);
+  background: var(--bg-2);
+  opacity: 0.85;
+}
+.approval-result {
+  font-weight: 700;
+}
+.approval:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* -------------------------------------------------------------- composer */
+
+
+.jump {
+  position: absolute;
+  top: -52px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-height: var(--tap);
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.85rem;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.35);
+  cursor: pointer;
+}
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+}
+.status {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+/* Stop sits above the composer so the text field never changes size mid-turn */
+.btn.stop {
+  margin-left: auto;
+  height: var(--tap);
+}
+/* indeterminate activity bar (no spinner glyphs, no images) */
+.activity {
+  display: block;
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+  position: relative;
+}
+.activity::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: slide 1.1s ease-in-out infinite;
+}
+@keyframes slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity::after {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
+  .btn:active {
+    transform: none;
+  }
+}
+
+
+.composer textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: 40vh;
+  max-height: 40dvh;
+  overflow-y: auto;
+  resize: none;
+}
+
+/* -------------------------------------------------------------- settings */
+
+.settings {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.settings form {
+  padding: var(--pad) var(--pad) 24px;
+  display: grid;
+  gap: 6px;
+}
+.h1 {
+  margin: 4px 0 8px;
+  font-size: 1.2rem;
+}
+.settings label {
+  margin-top: 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.settings p {
+  margin: 4px 0 0;
+}
+.settings .row {
+  margin-top: 10px;
+}
+.settings fieldset {
+  margin: 14px 0 0;
+  padding: 4px 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.settings legend {
+  padding: 0 6px;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  min-height: var(--tap);
+}
+.check input {
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+.check label {
+  margin: 0;
+}
+.path-note {
+  margin-top: 4px;
+  font-size: 0.9rem;
+}
+.path {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--bg-3);
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+}
+.sticky-actions {
+  margin-top: 18px;
+}
+
+/* ------------------------------------------------------- first-run wizard */
+
+/*
+ * The wizard is the whole screen (no tab bar) while it is up: on a 390px phone
+ * there is no room for anything else, and a beginner has nothing useful to do
+ * in the other tabs yet. Everything stacks vertically - no horizontal scroll.
+ */
+.wizard {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--pad) var(--pad) 24px;
+}
+.wizard-head {
+  position: sticky;
+  top: calc(-1 * var(--pad));
+  z-index: 5;
+  margin: calc(-1 * var(--pad)) calc(-1 * var(--pad)) 0;
+  padding: var(--pad) var(--pad) 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.wizard-head .h1 {
+  margin: 0 0 8px;
+}
+.h2 {
+  margin: 4px 0 0;
+  font-size: 1.05rem;
+}
+
+.steps {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.step {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 4px 0 6px;
+  border-bottom: 3px solid var(--border);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.step.done {
+  border-bottom-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--fg);
+}
+.step.current {
+  border-bottom-color: var(--accent);
+  color: var(--fg);
+  font-weight: 700;
+}
+.step.skip {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.wizard-body {
+  display: grid;
+  gap: 6px;
+}
+.wstep {
+  display: grid;
+  gap: 6px;
+}
+.wstep label {
+  margin-top: 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.wstep p {
+  margin: 4px 0 0;
+}
+.wstep .row {
+  margin-top: 4px;
+}
+
+.chosen {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cards {
+  display: grid;
+  gap: var(--gap);
+  margin-top: 10px;
+}
+.tier-head {
+  margin-top: 8px;
+}
+.tier-label {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.tier-hint {
+  margin: 2px 0 0;
+}
+
+/* One tap = choose and advance, so the whole card is the button. */
+.card {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.card:active {
+  transform: translateY(1px);
+}
+.card.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-2));
+}
+.card-title {
+  font-weight: 700;
+}
+.card-why,
+.card-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+.card-meta {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+}
+
+.keylink {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: minmax(0, 8em) minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+}
+.summary dt {
+  color: var(--muted);
+}
+.summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.wizard-actions {
+  margin-top: 18px;
+  flex-wrap: nowrap;
+}
+.wizard-escape {
+  margin: 12px 0 0;
+  text-align: center;
+}
+.btn.link {
+  min-height: var(--tap);
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+/* ------------------------------------------- connection test / search hits */
+
+.test-result {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.test-result.pending {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.test-result.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, var(--bg-2));
+}
+.test-result.bad {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-2));
+}
+
+.hits {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  max-height: 45vh;
+  overflow-y: auto;
+}
+
+/* --------------------------------------------------------------- status list */
+
+.status-list {
+  display: grid;
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+.status-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+}
+.status-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+}
+.status-dot.ok { background: var(--ok); }
+.status-dot.bad { background: var(--danger); }
+.status-dot.neutral { background: var(--muted); }
+.status-body { min-width: 0; }
+.status-label {
+  margin: 0;
+  font-size: 0.85rem;
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.status-fix {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+
+/* ------------------------------------------------------------------- chips */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 6px;
+}
+.chip {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.chip-main {
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 6px 4px 6px 12px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.chip-main:hover {
+  color: var(--accent);
+}
+.chip-x {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 6px 12px 6px 6px;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-width: var(--tap);
+}
+.chip-x:hover {
+  color: var(--danger);
+}
+.hit {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.hit-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+.hit-meta {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+.hit.unknown {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--border));
+}
+.hit-warn {
+  color: var(--warn);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------ tabs */
+
+
+
+.tab.active {
+  color: var(--fg);
+  border-top-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* ----------------------------------------------------------------- toast */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: min(90vw, 480px);
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  color: var(--fg);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.4);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+.toast.error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* --------------------------------------------------------------- desktop */
+
+/* One breakpoint for "desktop", matching the 769px block further down. A
+   separate 700px block used to widen bubbles on 700-768px screens, which is
+   exactly the range that still shows the mobile bottom tab bar. */
+@media (min-width: 769px) {
+  .msg {
+    max-width: 78%;
+  }
+}
+
+/* ------------------------------------------------------------- overrides
+   These re-declare selectors defined earlier in the file and win by being
+   last. This is the current look; edit here, not above, or your change will
+   be silently overridden. */
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.11); border: 3px solid transparent; background-clip: padding-box; border-radius: 999px; }
+
+.composer-wrap {
+  flex: 0 0 auto;
+  padding: var(--pad);
+  background: linear-gradient(180deg, transparent, rgba(16,23,31,.78) 24%, #10171f 74%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: rgba(19,28,37,.98);
+  border: 1px solid rgba(85,237,160,.17);
+  border-radius: 14px;
+  padding: 8px;
+  box-shadow: var(--shadow), inset 0 1px rgba(255,255,255,.02);
+}
+.composer:focus-within {
+  border-color: rgba(85,237,160,.34);
+  box-shadow: var(--shadow), 0 0 0 3px rgba(85,237,160,.035);
+}
+.composer textarea {
+  border: 0;
+  background: transparent;
+  padding: 8px;
+  min-height: 44px;
+}
+.composer textarea:focus {
+  box-shadow: none;
+}
+
+.tool {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: #0c1218;
+  font-size: 12.5px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.16);
+}
+.approval {
+  border: 1px solid rgba(242,198,107,.30);
+  background: rgba(242,198,107,.09);
+  color: #ffd98a;
+  border-radius: 10px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+/* ------------------------------------------------------------------ layout */
+.workspace {
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@media (min-width: 769px) {
+  .app {
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr);
+    height: 100vh;
+  }
+  /* JS sets tabbar.hidden = true when wizard is shown.
+     On desktop we ALWAYS want the sidebar visible, so override [hidden]. */
+  #tabbar[hidden] {
+    display: flex !important;
+  }
+  .sidebar {
+    border-right: 1px solid var(--border);
+    background: var(--bg-2);
+    order: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 24px 14px;
+    z-index: 10;
+    overflow-y: auto;
+  }
+  .sidebar-header {
+    display: block;
+    padding: 0 12px 32px;
+  }
+  .sidebar-header h2 {
+    margin: 0;
+    color: var(--accent);
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .workspace {
+    order: 2;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .tab {
+    text-align: left;
+    padding: 12px 16px;
+    border-radius: 9px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .tab[aria-selected="true"] {
+    background: rgba(85,237,160,.12);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .tab:hover:not([aria-selected="true"]) {
+    background: rgba(255,255,255,.04);
+    color: var(--fg);
+  }
+}
+
+@media (max-width: 768px) {
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  .sidebar {
+    order: 2;
+    flex: 0 0 auto;
+    display: flex;
+    border-top: 1px solid var(--border);
+    background: var(--bg-2);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .sidebar-header {
+    display: none;
+  }
+  .sidebar-nav {
+    display: flex;
+    flex: 1;
+  }
+  .tab {
+    flex: 1 1 0;
+    min-height: var(--tap);
+    padding: 12px 8px;
+    border: 0;
+    border-top: 3px solid transparent;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    text-align: center;
+    cursor: pointer;
+  }
+  .tab[aria-selected="true"] {
+    border-top-color: var(--accent);
+    color: var(--accent);
+  }
+  .workspace {
+    order: 1;
+    flex: 1 1 auto;
+  }
+}
+
+/* --------------------------------------------------------- markdown styles */
+
+.md-prose { display: grid; gap: 10px; }
+.md-para { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.md-heading { margin: 4px 0 2px; font-weight: 700; line-height: 1.3; }
+h3.md-heading { font-size: 1.05rem; color: var(--fg); }
+h4.md-heading { font-size: 0.95rem; color: var(--fg); }
+h5.md-heading { font-size: 0.85rem; color: var(--muted); }
+.md-list { margin: 4px 0; padding-left: 22px; display: grid; gap: 4px; }
+.md-list li { line-height: 1.55; overflow-wrap: anywhere; }
+.md-blockquote { border-left: 3px solid var(--border-strong); padding: 4px 12px; margin: 0; background: rgba(85,237,160,.04); border-radius: 0 8px 8px 0; }
+.md-blockquote p { color: var(--muted); }
+.inline-code { font-family: var(--mono); font-size: 0.83em; background: rgba(255,255,255,.08); padding: 2px 5px; border-radius: 5px; color: var(--accent); }
+.md-link { color: var(--accent); }
+.md-link-url { color: var(--muted); font-size: 0.8em; }
+.md-table { border-collapse: collapse; width: 100%; font-size: 0.85rem; overflow: hidden; border-radius: 8px; border: 1px solid var(--border); }
+.md-table th, .md-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.md-table th { background: rgba(255,255,255,.04); font-weight: 600; color: var(--muted); font-size: 0.78rem; letter-spacing: 0.05em; text-transform: uppercase; }
+.md-table tr:last-child td { border-bottom: 0; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
+
+/* ------------------------------------------------- server notices & states */
+
+/* tool_note from the daemon: context nearly full, approval timed out, … */
+.tool-note {
+  margin: 6px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--warn);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  color: var(--warn);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.toast.warn {
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--border));
+  color: var(--warn);
+}
