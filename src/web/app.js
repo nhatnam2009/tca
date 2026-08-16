@@ -35,6 +35,117 @@ const store = {
   del: (k) => { try { localStorage.removeItem(k); } catch {} },
 };
 
+/* --------------------------------------------------------------------- i18n */
+
+/**
+ * Translations come from the server, from the same src/i18n.js that `tca doctor`
+ * imports, so the terminal and the UI can never say different things about the
+ * same check. This file cannot import it directly (it has to stay loadable as a
+ * classic script), so the daemon serves the table as JSON.
+ *
+ * The English text stays in index.html as written. A `data-i18n` attribute only
+ * *overrides* it, which means if this fetch ever fails the UI is still a complete,
+ * usable English app instead of a page full of dotted key names.
+ */
+const LANG_KEY = "tca.lang";
+let dict = { vi: {}, en: {} };
+let lang = "vi";
+
+async function loadI18n() {
+  try {
+    const res = await fetch("/assets/i18n.json", { cache: "no-store" });
+    if (!res.ok) return;
+    const payload = await res.json();
+    if (payload && payload.dict) dict = payload.dict;
+  } catch {
+    // Offline or an old daemon: keep the English already in the HTML.
+  }
+  const saved = store.get(LANG_KEY);
+  lang = normaliseLang(saved || navigator.language || "vi");
+}
+
+function normaliseLang(value) {
+  const s = String(value || "").toLowerCase();
+  for (const l of ["vi", "en"]) if (s.startsWith(l)) return l;
+  return "vi";
+}
+
+/**
+ * Translate. Falls back English, then to the key, so a missing string is visible
+ * as a bug rather than as blank space.
+ * @param {string} key
+ * @param {Record<string, string|number>} [params]
+ */
+function t(key, params) {
+  let s = (dict[lang] && dict[lang][key]) ?? (dict.en && dict.en[key]) ?? key;
+  if (params) for (const [k, v] of Object.entries(params)) s = s.split(`{${k}}`).join(String(v));
+  return s;
+}
+
+/** True when the table actually loaded, i.e. it is safe to replace HTML text. */
+const haveDict = () => Boolean(dict[lang] && Object.keys(dict[lang]).length);
+
+/**
+ * Fill in every marked element under `root`.
+ *   data-i18n       -> textContent
+ *   data-i18n-ph    -> placeholder
+ *   data-i18n-aria  -> aria-label
+ * Safe to call repeatedly; that is how switching language works.
+ */
+function applyI18n(root = document) {
+  if (!haveDict()) return;
+  for (const node of root.querySelectorAll("[data-i18n]")) {
+    const value = t(node.dataset.i18n);
+    if (value !== node.dataset.i18n) node.textContent = value;
+  }
+  for (const node of root.querySelectorAll("[data-i18n-ph]")) {
+    const value = t(node.dataset.i18nPh);
+    if (value !== node.dataset.i18nPh) node.setAttribute("placeholder", value);
+  }
+  for (const node of root.querySelectorAll("[data-i18n-aria]")) {
+    const value = t(node.dataset.i18nAria);
+    if (value !== node.dataset.i18nAria) node.setAttribute("aria-label", value);
+  }
+  document.documentElement.lang = lang;
+}
+
+/**
+ * Switch language. Both tables are already in memory, so this is instant and
+ * needs no reload; the whole document is re-labelled and the current view
+ * re-rendered so JS-built text follows too.
+ */
+function setLang(next, { persistToServer = true } = {}) {
+  const value = normaliseLang(next);
+  if (value === lang) return;
+  lang = value;
+  store.set(LANG_KEY, value);
+  applyI18n(document);
+  redrawDynamicText();
+  if (persistToServer) {
+    api("/api/config", { method: "PUT", body: { ...(serverConfig || {}), lang: value } }).catch(() => {});
+    if (serverConfig) serverConfig.lang = value;
+  }
+}
+
+/** The last /api/config payload, so a language change can be saved without a reload. */
+let serverConfig = null;
+
+/**
+ * Re-render the parts of the UI that JS wrote rather than HTML: status line,
+ * catalog summary, session labels, the Power panel.
+ */
+function redrawDynamicText() {
+  try {
+    if (streaming) setStatus(t("chat.working"));
+    fillSessionSelect();
+    renderCatalogInfo();
+    if (powerData) renderPower(powerData);
+    if (statusData) renderAndroidStatus(statusData);
+  } catch {
+    // A redraw is cosmetic; never let it break a language switch.
+  }
+}
+
 /** An "${ENV_NAME}" apiKey is a pointer, not a secret: never mask it. */
 const PLACEHOLDER_KEY = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
 
@@ -80,11 +191,11 @@ function testResult(node, res) {
   node.textContent = "";
   if (res && res.ok) {
     node.className = "test-result ok";
-    node.textContent = res.model ? `Connection OK \u2014 ${res.model} answered.` : "Connection OK.";
+    node.textContent = res.model ? t("provider.testOk", { model: res.model }) : t("provider.testOkPlain");
     return true;
   }
   node.className = "test-result bad";
-  node.textContent = String((res && res.error) || "Test failed.");
+  node.textContent = String((res && res.error) || t("provider.testFailed"));
   return false;
 }
 
@@ -135,7 +246,7 @@ function showGate(message) {
 function onUnauthorized() {
   token = "";
   store.del(TOKEN_KEY);
-  showGate("That token was rejected. Paste the current one.");
+  showGate(t("gate.rejected"));
 }
 
 /* ----------------------------------------------------------------- http api */
@@ -478,13 +589,13 @@ async function copyText(text) {
 /** A <pre><code> block with a Copy button. `tabIndex` lets keyboards scroll it. */
 function codeBlock(code, lang) {
   const head = el("div", "code-head");
-  const btn = el("button", "btn small", "Copy");
+  const btn = el("button", "btn small", t("code.copy"));
   btn.type = "button";
-  btn.setAttribute("aria-label", "Copy code block");
+  btn.setAttribute("aria-label", t("code.copyAria"));
   btn.addEventListener("click", async () => {
     const ok = await copyText(code);
-    btn.textContent = ok ? "Copied" : "Failed";
-    setTimeout(() => (btn.textContent = "Copy"), 1200);
+    btn.textContent = ok ? t("code.copied") : t("code.copyFailed");
+    setTimeout(() => (btn.textContent = t("code.copy")), 1200);
   });
   head.append(el("span", "code-lang", lang || "code"), btn);
   const wrap = el("div", "code");
@@ -548,7 +659,7 @@ function renderRich(container, raw) {
 /* ----------------------------------------------------------- chat rendering */
 
 const messagesEl = () => $("messages");
-const BUSY = "Working\u2026";
+const BUSY = () => t("chat.working");
 
 let state = null; // last /api/state payload
 let sessions = [];
@@ -559,6 +670,10 @@ let turn = null; // { bubble, body, text:{node,raw}|null, footer, tools:Map }
 let stick = true; // auto-scroll only while the user sits at the bottom
 /** approval id -> settle(label), so the server can close a card the user ignored. */
 const approvals = new Map();
+/** Last /api/status and /api/capabilities payloads, kept so a language switch can
+ *  repaint them without a refetch. */
+let statusData = null;
+let powerData = null;
 
 const setStatus = (text) => ($("stream-status").textContent = text || "");
 
@@ -567,7 +682,7 @@ function setStreaming(on) {
   $("btn-send").disabled = on;
   $("btn-stop").hidden = !on;
   $("activity").hidden = !on;
-  setStatus(on ? BUSY : "");
+  setStatus(on ? BUSY() : "");
 }
 
 function scrollToBottom(force) {
@@ -587,7 +702,7 @@ function messageHost() {
 /** Append an empty message bubble and hand back its parts. */
 function makeBubble(role) {
   const bubble = el("article", `msg ${role}`);
-  bubble.setAttribute("aria-label", role === "user" ? "You" : "Assistant");
+  bubble.setAttribute("aria-label", role === "user" ? t("chat.you") : t("chat.assistant"));
   const body = el("div", "msg-body");
   bubble.appendChild(body);
   messageHost().appendChild(bubble);
@@ -670,7 +785,7 @@ function toolRow(container, name, input) {
     badge,
   );
   const body = el("div", "tool-body");
-  body.append(el("p", "tool-label", "input"), pre(prettyInput(input)));
+  body.append(el("p", "tool-label", t("tool.input")), pre(prettyInput(input)));
   const row = el("details", "tool");
   row.append(sum, body);
   container.appendChild(row);
@@ -678,10 +793,10 @@ function toolRow(container, name, input) {
 }
 
 function finishToolRow(handle, ok, output) {
-  handle.badge.textContent = ok ? "ok" : "error";
+  handle.badge.textContent = ok ? t("tool.ok") : t("tool.error");
   handle.badge.classList.add(ok ? "ok" : "bad");
   if (!ok) handle.row.classList.add("bad");
-  handle.body.append(el("p", "tool-label", "output"), outputBlock(output));
+  handle.body.append(el("p", "tool-label", t("tool.output")), outputBlock(output));
   // A file change is the interesting part of a turn: show the diff without a tap.
   if (ok && looksLikeDiff(output)) handle.row.open = true;
 }
@@ -691,17 +806,17 @@ function approvalCard(ev) {
   const isEdit = ev.kind === "edit";
   const card = el("section", "approval");
   card.setAttribute("role", "group");
-  card.setAttribute("aria-label", isEdit ? "File change approval request" : "Command approval request");
+  card.setAttribute("aria-label", isEdit ? t("approval.edit.aria") : t("approval.command.aria"));
   card.tabIndex = -1;
   card.append(
-    el("p", "approval-title", isEdit ? "Allow this file change?" : "Run this command?"),
+    el("p", "approval-title", isEdit ? t("approval.edit.title") : t("approval.command.title")),
     pre(ev.command ?? ""),
   );
   if (ev.reason) card.appendChild(el("p", "small", String(ev.reason)));
-  if (ev.cwd) card.appendChild(el("p", "muted small", `${isEdit ? "workspace" : "cwd"}: ${ev.cwd}`));
+  if (ev.cwd) card.appendChild(el("p", "muted small", t(isEdit ? "approval.workspace" : "approval.cwd", { path: ev.cwd })));
 
-  const allow = el("button", "btn primary grow", "Allow");
-  const deny = el("button", "btn danger grow", "Deny");
+  const allow = el("button", "btn primary grow", t("approval.allow"));
+  const deny = el("button", "btn danger grow", t("approval.deny"));
   allow.type = deny.type = "button";
   const row = el("div", "row");
   const result = el("p", "approval-result");
@@ -721,7 +836,7 @@ function approvalCard(ev) {
     allow.disabled = deny.disabled = true;
     try {
       await api(`/api/approvals/${encodeURIComponent(ev.id)}`, { method: "POST", body: { approved } });
-      settle(approved ? "Allowed" : "Denied");
+      settle(approved ? t("approval.allowed") : t("approval.denied"));
     } catch (err) {
       allow.disabled = deny.disabled = false;
       fail(err);
@@ -737,7 +852,7 @@ function approvalCard(ev) {
   scrollToBottom();
   // The turn is blocked until this is answered, so it must be impossible to
   // miss: announce it, and move focus so a screen reader lands on it.
-  toast(isEdit ? "Approval required to change a file" : "Approval required to run a command", "warn");
+  toast(isEdit ? t("approval.toast.edit") : t("approval.toast.command"), "warn");
   try { card.focus({ preventScroll: true }); } catch { card.focus(); }
   return card;
 }
@@ -788,7 +903,7 @@ function openStream(id) {
   const url = `/api/sessions/${encodeURIComponent(id)}/events?token=${encodeURIComponent(token)}`;
   const es = new EventSource(url);
   stream = es;
-  es.addEventListener("open", () => setStatus(streaming ? BUSY : ""));
+  es.addEventListener("open", () => setStatus(streaming ? BUSY() : ""));
   es.addEventListener("message", (e) => {
     let data;
     try { data = JSON.parse(e.data); } catch { return; }
@@ -798,17 +913,17 @@ function openStream(id) {
     if (es !== stream) return; // stale stream from a previous session
     if (es.readyState === EventSource.CONNECTING) {
       // Routine on mobile (doze, network switch): the browser retries itself.
-      setStatus("Connection lost \u2013 reconnecting\u2026");
+      setStatus(t("chat.reconnecting"));
       return;
     }
-    setStatus("Disconnected \u2013 reload to reconnect.");
+    setStatus(t("chat.disconnected"));
     try { await api("/api/state"); } catch {} // surfaces a 401 as the token gate
   });
 }
 
 function handleEvent(ev) {
   if (!ev || typeof ev.type !== "string") return;
-  if (streaming) setStatus(BUSY); // any event means we are connected again
+  if (streaming) setStatus(BUSY()); // any event means we are connected again
   switch (ev.type) {
     case "text_delta":
       if (!streaming) setStreaming(true); // e.g. page reloaded mid-turn
@@ -840,7 +955,7 @@ function handleEvent(ev) {
     case "approval_closed": {
       // The server stopped waiting (10-minute timeout, or the turn was aborted).
       const settle = approvals.get(String(ev.id));
-      if (settle) settle(ev.outcome === "timeout" ? "Timed out \u2014 not run" : "Cancelled");
+      if (settle) settle(ev.outcome === "timeout" ? t("approval.timedOut") : t("approval.cancelled"));
       break;
     }
     case "tool_note":
@@ -855,13 +970,13 @@ function handleEvent(ev) {
       }
       break;
     case "usage":
-      footerOf(ensureTurn()).textContent = `${ev.input ?? 0} in \u00b7 ${ev.output ?? 0} out tokens`;
+      footerOf(ensureTurn()).textContent = t("chat.tokens", { in: ev.input ?? 0, out: ev.output ?? 0 });
       break;
     case "done": {
       const odd = ev.stopReason && !["end_turn", "stop", "done"].includes(ev.stopReason);
       if (turn && odd) {
         const f = footerOf(turn);
-        f.textContent = `${f.textContent ? `${f.textContent} \u00b7 ` : ""}stopped: ${ev.stopReason}`;
+        f.textContent = `${f.textContent ? `${f.textContent} \u00b7 ` : ""}${t("chat.stopped", { reason: ev.stopReason })}`;
       }
       flushRender(); // paint the final delta before letting go of the turn
       turn = null;
@@ -882,7 +997,7 @@ function handleEvent(ev) {
 /* ----------------------------------------------------------------- sessions */
 
 function sessionLabel(s) {
-  const title = (s.title || "").trim() || `Session ${String(s.id).slice(0, 8)}`;
+  const title = (s.title || "").trim() || t("chat.sessionFallback", { id: String(s.id).slice(0, 8) });
   return s.messageCount ? `${title} (${s.messageCount})` : title;
 }
 
@@ -912,7 +1027,7 @@ async function selectSession(id) {
   const messages = (data && data.messages) || [];
   for (const m of messages) renderStoredMessage(m);
   if (!messages.length) {
-    messagesEl().appendChild(el("p", "empty muted", "No messages yet. Describe what you want changed."));
+    messagesEl().appendChild(el("p", "empty muted", t("chat.empty")));
   }
   openStream(id);
   scrollToBottom(true);
@@ -933,14 +1048,14 @@ async function deleteSession() {
   if (!sessionId) return;
   const current = sessions.find((s) => s.id === sessionId);
   const label = current ? sessionLabel(current) : sessionId;
-  if (!confirm(`Delete "${label}"? This cannot be undone.`)) return;
+  if (!confirm(t("chat.deleteConfirm", { name: label }))) return;
   closeStream();
   await api(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
   sessionId = null;
   await loadSessions();
   if (!sessions.length) await newSession();
   else await selectSession(sessions[0].id);
-  toast("Session deleted");
+  toast(t("chat.deleted"));
 }
 
 /* ----------------------------------------------------------------- composer */
@@ -973,7 +1088,7 @@ async function abort() {
   if (!sessionId) return;
   try {
     await api(`/api/sessions/${encodeURIComponent(sessionId)}/abort`, { method: "POST" });
-    setStatus("Stopping\u2026");
+    setStatus(t("ui.stopping"));
   } catch (err) {
     fail(err);
   }
@@ -991,7 +1106,7 @@ let modelChoices = []; // catalog (or live) models behind the Settings picker
 function setKeyVisible(show) {
   const btn = $("btn-toggle-key");
   $("prov-apikey").type = show ? "text" : "password";
-  btn.textContent = show ? "Hide" : "Show";
+  btn.textContent = show ? t("provider.hide") : t("provider.show");
   btn.setAttribute("aria-pressed", String(show));
 }
 
@@ -1039,7 +1154,7 @@ function renderSavedModelIds() {
   const p = (cfg.providers && cfg.providers[provId]) || {};
   const models = Array.isArray(p.models) ? p.models : [];
   if (!models.length) {
-    host.appendChild(el("p", "muted small", "No saved model ids yet for this provider."));
+    host.appendChild(el("p", "muted small", t("ui.noSavedIds")));
     return;
   }
   for (const m of models) {
@@ -1061,7 +1176,7 @@ function renderSavedModelIds() {
     rm.addEventListener("click", () => {
       p.models = models.filter((x) => x !== m);
       renderSavedModelIds();
-      toast("Removed \u2013 remember to save");
+      toast(t("ui.removedRememberSave"));
     });
     chip.append(btn, rm);
     host.appendChild(chip);
@@ -1070,13 +1185,13 @@ function renderSavedModelIds() {
 
 function saveCurrentModelId() {
   const id = $("prov-model").value.trim();
-  if (!id) return toast("Type or pick a model id first", "error");
+  if (!id) return toast(t("ui.pickModelFirst"), "error");
   const p = (cfg.providers && cfg.providers[provId]) || {};
   if (!Array.isArray(p.models)) p.models = [];
-  if (p.models.includes(id)) return toast(`"${id}" is already saved`);
+  if (p.models.includes(id)) return toast(t("ui.alreadySaved", { id }));
   p.models.push(id);
   renderSavedModelIds();
-  toast("Saved \u2013 remember to press \u201cSave settings\u201d");
+  toast(t("ui.savedRememberSave"));
 }
 
 function fillSettings() {
@@ -1088,6 +1203,7 @@ function fillSettings() {
   $("cfg-autoapprove").checked = Boolean(cfg.autoApproveCommands);
   // Absent in configs written before this option existed, and the default is on.
   $("cfg-autoapprove-edits").checked = cfg.autoApproveEdits !== false;
+  $("cfg-lang").value = normaliseLang(cfg.lang || lang);
   $("cfg-maxsteps").value = cfg.maxSteps ?? 40;
   $("cfg-instructions").value = cfg.instructions || "";
   $("cfg-deny").value = (cfg.denyCommands || []).join("\n");
@@ -1150,30 +1266,32 @@ function renderCatalogInfo() {
   const line = $("catalog-info");
   const btn = $("btn-download-catalog");
   if (!info) { line.textContent = ""; return; }
-  const source = info.source === "full" ? "full catalog from models.dev" : "bundled offline list (seed)";
-  line.textContent =
-    `Catalog: ${source} \u00b7 ${info.modelCount} tool-capable models \u00b7 ` +
-    `${info.providerCount} providers \u00b7 generated ${info.generated}`;
+  line.textContent = t("catalog.info", {
+    source: t(info.source === "full" ? "catalog.source.full" : "catalog.source.seed"),
+    models: info.modelCount,
+    providers: info.providerCount,
+    generated: info.generated,
+  });
   btn.textContent = info.source === "full"
-    ? "Re-download full catalog (3.8 MB)"
-    : "Download full catalog (3.8 MB)";
+    ? t("catalog.redownload")
+    : t("catalog.download");
 }
 
 async function downloadCatalog() {
   const btn = $("btn-download-catalog");
-  if (!confirm("Download the full model catalog from models.dev?\n\nThat is about 3.8 MB - it will use mobile data if you are not on Wi-Fi.")) {
+  if (!confirm(t("catalog.downloadConfirm"))) {
     return;
   }
   const label = btn.textContent;
   btn.disabled = true;
-  btn.textContent = "Downloading\u2026";
+  btn.textContent = t("catalog.downloading");
   try {
     const res = await api("/api/catalog/download", { method: "POST" });
     if (res && res.catalog && state) state.catalog = res.catalog;
     providersInfo = null; // provider list is cheap; re-fetch with fresh counts
     renderCatalogInfo();
     await fillModelPicker();
-    toast(`Catalog updated: ${res.models} models from ${res.providers} providers`);
+    toast(t("catalog.updated", { models: res.models, providers: res.providers }));
   } catch (err) {
     fail(err);
   } finally {
@@ -1189,7 +1307,7 @@ async function testActiveProvider() {
   const out = $("provider-test-result");
   const model = $("prov-model").value.trim();
   btn.disabled = true;
-  testPending(out, "Testing\u2026");
+  testPending(out, t("provider.testing"));
   try {
     const res = await api("/api/providers/test", {
       method: "POST",
@@ -1245,7 +1363,7 @@ function scheduleModelSearch(query) {
 async function runModelSearch(q) {
   const host = $("model-search-results");
   host.textContent = "";
-  host.appendChild(el("p", "muted small", "Searching\u2026"));
+  host.appendChild(el("p", "muted small", t("ui.searching")));
   try {
     const res = await api(`/api/catalog/search?q=${encodeURIComponent(q)}`);
     renderHits((res && res.hits) || []);
@@ -1259,7 +1377,7 @@ function renderHits(hits) {
   const host = $("model-search-results");
   host.textContent = "";
   if (!hits.length) {
-    host.appendChild(el("p", "muted small", "Nothing matched. Try a shorter word."));
+    host.appendChild(el("p", "muted small", t("ui.noMatch")));
     return;
   }
   for (const hit of hits) {
@@ -1268,7 +1386,7 @@ function renderHits(hits) {
     btn.append(el("span", "hit-title", `${hit.providerName} \u2014 ${hit.model.name || hit.model.id}`));
     const meta = [hit.model.id, fmtContext(hit.model.context), fmtPrice(hit.model)].filter(Boolean).join(" \u00b7 ");
     btn.append(el("span", "hit-meta", meta));
-    if (!hit.known) btn.append(el("span", "hit-warn", "needs a manual base URL"));
+    if (!hit.known) btn.append(el("span", "hit-warn", t("ui.manualBaseUrl")));
     btn.addEventListener("click", () => selectHit(hit));
     host.appendChild(btn);
   }
@@ -1295,11 +1413,11 @@ function selectHit(hit) {
     cfg.active = provId;
     cfg.providers[provId].model = hit.model.id;
     fillSettings();
-    toast(`${hit.providerName}: ${hit.model.id} \u2013 remember to save`);
+    toast(t("ui.pickedRememberSave", { provider: hit.providerName, model: hit.model.id }));
     return;
   }
   // Known provider, not configured yet: the wizard collects key + base URL.
-  toast(`${hit.providerName} is not set up yet \u2013 finishing setup for it`);
+  toast(t("ui.finishingSetup", { provider: hit.providerName }));
   enterWizard({ returnTo: "settings", providerId: hit.providerId, model: hit.model.id }).catch(fail);
 }
 
@@ -1324,6 +1442,7 @@ function readSettings() {
   cfg.workspace = $("cfg-workspace").value.trim();
   cfg.autoApproveCommands = $("cfg-autoapprove").checked;
   cfg.autoApproveEdits = $("cfg-autoapprove-edits").checked;
+  cfg.lang = normaliseLang($("cfg-lang").value);
   cfg.maxSteps = Number($("cfg-maxsteps").value) || 40;
   cfg.instructions = $("cfg-instructions").value;
   cfg.denyCommands = $("cfg-deny").value.split("\n").map((s) => s.trim()).filter(Boolean);
@@ -1332,6 +1451,11 @@ function readSettings() {
 async function loadSettings(announce) {
   cfg = await api("/api/config");
   if (!cfg.providers) cfg.providers = {};
+  // Kept so the language switch can PUT a full config without a re-read.
+  serverConfig = cfg;
+  // The server is the source of truth for language; follow it unless the user
+  // has already picked one in this browser.
+  if (cfg.lang && !store.get(LANG_KEY)) setLang(cfg.lang, { persistToServer: false });
   const ids = Object.keys(cfg.providers);
   provId = cfg.providers[cfg.active] ? cfg.active : ids[0] || null;
   if (!provId) {
@@ -1343,30 +1467,45 @@ async function loadSettings(announce) {
   renderCatalogInfo();
   settingsLoaded = true;
   loadAndroidStatus().catch(() => {});
-  if (announce) toast("Config reloaded from disk");
+  if (announce) toast(t("ui.configReloaded"));
 }
 
 /** Same checks as `tca doctor`, rendered as a list in Settings. */
 async function loadAndroidStatus() {
   const host = $("status-list");
   host.textContent = "";
-  host.appendChild(el("p", "muted small", "Checking\u2026"));
-  let res;
+  host.appendChild(el("p", "muted small", t("ui.checking")));
   try {
-    res = await api("/api/status");
+    statusData = await api("/api/status");
   } catch (err) {
+    statusData = null;
     host.textContent = "";
     host.appendChild(el("p", "warn small", err.message));
     return;
   }
+  renderAndroidStatus(statusData);
+}
+
+/** Split out from the fetch so a language switch can repaint without refetching. */
+function renderAndroidStatus(res) {
+  const host = $("status-list");
   host.textContent = "";
+  if (!res) return;
   if (!res.termux) {
-    host.appendChild(el("p", "muted small", "Not running under Termux \u2013 Android-only checks are skipped."));
+    host.appendChild(el("p", "muted small", t("ui.notTermux")));
   }
   for (const c of res.checks) {
     const row = el("div", "status-row");
-    const mark = c.ok === null ? "status-dot neutral" : c.ok ? "status-dot ok" : "status-dot bad";
-    row.appendChild(el("span", mark));
+    const state = c.ok === null ? "neutral" : c.ok ? "ok" : "bad";
+    const dot = el("span", `status-dot ${state}`);
+    // Colour alone was the entire pass/fail signal, so a screen reader heard
+    // nothing but the label.
+    dot.setAttribute("role", "img");
+    dot.setAttribute(
+      "aria-label",
+      state === "ok" ? t("common.installed") : state === "bad" ? t("common.missing") : t("common.unknown"),
+    );
+    row.appendChild(dot);
     const body = el("div", "status-body");
     body.appendChild(el("p", "status-label", c.label));
     if (c.ok === false && c.fix) body.appendChild(el("p", "status-fix muted small", c.fix));
@@ -1379,7 +1518,7 @@ async function saveSettings() {
   readSettings();
   try {
     const res = await api("/api/config", { method: "PUT", body: cfg });
-    toast(`Saved to ${res && res.path ? res.path : "config"}`);
+    toast(t("ui.savedTo", { path: (res && res.path) || "config" }));
     await refreshState(); // header provider/model may have changed
     await loadSettings(false); // re-read, so kept keys go back to the sentinel
   } catch (err) {
@@ -1410,7 +1549,7 @@ function removeProvider() {
   }
   cfg.active = provId;
   fillSettings();
-  toast("Removed \u2013 press \u201cSave settings\u201d to make it permanent");
+  toast(t("ui.removedSaveToPersist"));
 }
 
 /* ---------------------------------------------------- provider discovery api */
@@ -1550,7 +1689,7 @@ function renderRecommended() {
     tierGroup(host, copy.label, copy.hint);
     for (const r of group) host.appendChild(pickCard(r.provider, r.model, r.label, r.why));
   }
-  if (!recs.length) host.appendChild(el("p", "muted small", "No recommendations returned by the server."));
+  if (!recs.length) host.appendChild(el("p", "muted small", t("ui.noRecommendations")));
 }
 
 function renderAllProviders() {
@@ -1675,7 +1814,7 @@ function renderStep2() {
   const link = $("wiz-key-link");
   link.textContent = "";
   if (typeof entry.keyUrl === "string" && /^https:\/\//.test(entry.keyUrl)) {
-    const a = el("a", "keylink", "Get an API key");
+    const a = el("a", "keylink", t("ui.getApiKey"));
     a.href = entry.keyUrl;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
@@ -1700,7 +1839,7 @@ function renderStep2() {
 function setWizKeyVisible(show) {
   const btn = $("btn-wiz-toggle-key");
   $("wiz-apikey").type = show ? "text" : "password";
-  btn.textContent = show ? "Hide" : "Show";
+  btn.textContent = show ? t("provider.hide") : t("provider.show");
   btn.setAttribute("aria-pressed", String(show));
 }
 
@@ -1845,7 +1984,7 @@ async function wizardFinish() {
     await refreshState();
     if (settingsLoaded) await loadSettings(false);
     exitWizard(target);
-    toast(`Provider "${res && res.id ? res.id : body.id}" is ready`);
+    toast(t("ui.providerReady", { id: (res && res.id) || body.id }));
   } catch (err) {
     if (err.message !== "Unauthorized") wizStatus(err.message, true);
   } finally {
@@ -1856,24 +1995,134 @@ async function wizardFinish() {
 /* --------------------------------------------------------------------- tabs */
 
 /** Exactly one of chat / settings / wizard is on screen. */
+/**
+ * The tabs, driven by a table rather than by a chain of ifs.
+ *
+ * switchTab used to be binary - anything that was not "chat" resolved to
+ * settings - so adding a third tab meant rewriting both functions. Now a new tab
+ * is a new row here.
+ */
+const TABS = [
+  { name: "chat", tab: "tab-chat", panel: "panel-chat" },
+  { name: "power", tab: "tab-power", panel: "panel-power" },
+  { name: "settings", tab: "tab-settings", panel: "panel-settings" },
+];
+
+/** Exactly one panel on screen. The wizard is not a tab: it takes the whole view. */
 function showView(name) {
-  $("panel-chat").hidden = name !== "chat";
-  $("panel-settings").hidden = name !== "settings";
-  $("panel-wizard").hidden = name !== "wizard";
-  $("tabbar").hidden = name === "wizard"; // the wizard is full screen on purpose
+  const wizard = name === "wizard";
+  for (const { name: n, panel } of TABS) $(panel).hidden = wizard || n !== name;
+  $("panel-wizard").hidden = !wizard;
+  $("tabbar").hidden = wizard; // the wizard is full screen on purpose
 }
 
 function switchTab(name) {
-  const isChat = name === "chat";
-  showView(isChat ? "chat" : "settings");
-  for (const [id, on] of [["tab-chat", isChat], ["tab-settings", !isChat]]) {
-    const b = $(id);
+  const target = TABS.some((x) => x.name === name) ? name : "chat";
+  showView(target);
+  for (const { name: n, tab } of TABS) {
+    const on = n === target;
+    const b = $(tab);
     b.setAttribute("aria-selected", String(on));
     b.tabIndex = on ? 0 : -1;
     b.classList.toggle("active", on);
   }
-  if (isChat) scrollToBottom(true);
+  if (target === "chat") scrollToBottom(true);
+  else if (target === "power") loadPower().catch(fail);
   else if (!settingsLoaded) loadSettings(false).catch(fail);
+}
+
+/* -------------------------------------------------------------------- power */
+
+/**
+ * The Power panel: what the agent could do on this device and what is missing.
+ * Everything comes from GET /api/capabilities; this file decides only how it
+ * looks. The full design (one-tap install, the privilege wizard) lands next; for
+ * now it lists the same data the terminal `tca power` prints.
+ */
+async function loadPower() {
+  const host = $("power-body");
+  host.textContent = "";
+  host.appendChild(el("p", "muted small", t("ui.checking")));
+  try {
+    powerData = await api(`/api/capabilities?lang=${encodeURIComponent(lang)}`);
+  } catch (err) {
+    powerData = null;
+    host.textContent = "";
+    host.appendChild(el("p", "warn small", err.message));
+    return;
+  }
+  renderPower(powerData);
+}
+
+function renderPower(data) {
+  const host = $("power-body");
+  host.textContent = "";
+  if (!data) return;
+
+  const head = el("section", "power-score");
+  head.append(
+    el("p", "power-score-label", t("status.score")),
+    el("p", "power-score-value", `${data.score.percent}%`),
+  );
+  const bar = el("div", "power-bar");
+  bar.setAttribute("role", "img");
+  bar.setAttribute("aria-label", `${t("status.score")}: ${data.score.percent}%`);
+  const fill = el("span", "power-bar-fill");
+  fill.style.width = `${data.score.percent}%`;
+  bar.appendChild(fill);
+  head.appendChild(bar);
+  host.appendChild(head);
+
+  for (const group of data.groups) {
+    const missing = group.items.filter((i) => i.ok === false);
+    const fine = group.items.filter((i) => i.ok !== false);
+
+    const section = el("section", "power-group");
+    section.append(el("h2", "power-group-title", group.title), el("p", "muted small", group.hint));
+
+    for (const item of missing) {
+      const card = el("article", "power-item bad");
+      card.append(el("p", "power-item-title", item.title), el("p", "power-item-why muted small", item.why));
+      const meta = [
+        item.packages.length ? t("common.package", { name: item.packages.join(" ") }) : "",
+        item.sizeMb ? t("common.size", { n: item.sizeMb }) : "",
+      ].filter(Boolean).join(" \u00b7 ");
+      if (meta) card.appendChild(el("p", "power-item-meta muted small", meta));
+      card.appendChild(el("p", "power-item-fix small", item.fix));
+      section.appendChild(card);
+    }
+
+    // Everything already working collapses to one line: the panel must show what
+    // needs doing, not a wall of green ticks.
+    if (fine.length) {
+      const done = el("details", "power-done");
+      const sum = el("summary");
+      sum.append(el("span", "power-done-count", `\u2713 ${fine.length}`), el("span", null, t("common.installed")));
+      done.appendChild(sum);
+      const list = el("ul", "power-done-list");
+      for (const item of fine) {
+        const li = document.createElement("li");
+        li.textContent = item.detail ? `${item.title} \u2014 ${item.detail}` : item.title;
+        list.appendChild(li);
+      }
+      done.appendChild(list);
+      section.appendChild(done);
+    }
+    host.appendChild(section);
+  }
+
+  if (data.termux && data.privilege) {
+    const priv = el("section", "power-group");
+    priv.append(
+      el("h2", "power-group-title", t("cap.privilege.title")),
+      el("p", "power-item-title", data.privilege.label),
+      el("p", "muted small", data.privilege.detail),
+      el("p", "muted small", data.privilege.phantomLabel),
+    );
+    host.appendChild(priv);
+  }
+
+  if (!data.termux) host.appendChild(el("p", "muted small", t("ui.notTermux")));
 }
 
 /* ------------------------------------------------------------- state / boot */
@@ -1975,6 +2224,9 @@ function wire() {
   $("btn-reload-config").addEventListener("click", () => loadSettings(true).catch(fail));
   $("btn-recheck-status").addEventListener("click", () => loadAndroidStatus().catch(fail));
 
+  // ---- language. Both tables are already loaded, so this is instant.
+  $("cfg-lang").addEventListener("change", (e) => setLang(e.target.value));
+
   // ---- settings: model picker / catalog
   $("model-picker").addEventListener("change", (e) => {
     if (!e.target.value) return;
@@ -2035,14 +2287,18 @@ function wire() {
 
   // ---- tabs (tap, plus left/right arrows for keyboards)
   $("tab-chat").addEventListener("click", () => switchTab("chat"));
+  $("tab-power").addEventListener("click", () => switchTab("power"));
   $("tab-settings").addEventListener("click", () => switchTab("settings"));
-  for (const id of ["tab-chat", "tab-settings"]) {
-    $(id).addEventListener("keydown", (e) => {
+  $("btn-recheck-power").addEventListener("click", () => loadPower().catch(fail));
+  for (const [i, entry] of TABS.entries()) {
+    $(entry.tab).addEventListener("keydown", (e) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       e.preventDefault();
-      const next = id === "tab-chat" ? "tab-settings" : "tab-chat";
-      $(next).focus();
-      switchTab(next === "tab-chat" ? "chat" : "settings");
+      // Wraps around, so the arrow keys never dead-end on the first or last tab.
+      const step = e.key === "ArrowRight" ? 1 : -1;
+      const next = TABS[(i + step + TABS.length) % TABS.length];
+      $(next.tab).focus();
+      switchTab(next.name);
     });
   }
 
@@ -2069,9 +2325,16 @@ function wire() {
 
 /* --------------------------------------------------------------------- main */
 
-wire();
-token = takeTokenFromUrl();
-if (token) store.set(TOKEN_KEY, token);
-else token = store.get(TOKEN_KEY);
-if (token) boot();
-else showGate("");
+// The dictionary has to be in hand before anything is drawn, otherwise the token
+// gate flashes in the wrong language. It is a local request and it never throws:
+// if it fails the English already in index.html stands.
+(async () => {
+  await loadI18n();
+  wire();
+  applyI18n(document);
+  token = takeTokenFromUrl();
+  if (token) store.set(TOKEN_KEY, token);
+  else token = store.get(TOKEN_KEY);
+  if (token) boot();
+  else showGate("");
+})();

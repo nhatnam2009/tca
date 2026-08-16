@@ -1267,6 +1267,139 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
   color: var(--warn);
 }
 
+/* ------------------------------------------------------------- power panel */
+
+/* Device capability. The rule the layout follows: show what needs doing, and
+   collapse everything that already works into a single line. */
+
+.power {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+  overflow-y: auto;
+  padding: var(--pad);
+}
+
+.power-score {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.power-score-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.power-score-value {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.power-bar {
+  grid-column: 1 / -1;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.power-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.power-group {
+  display: grid;
+  gap: 10px;
+}
+.power-group-title {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.power-group > .muted {
+  margin: -6px 0 0;
+}
+
+.power-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.power-item.bad {
+  border-left-color: var(--warn);
+}
+.power-item p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.power-item-title {
+  font-weight: 600;
+  line-height: 1.35;
+}
+.power-item-why {
+  line-height: 1.55;
+}
+.power-item-fix {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+.power-item .btn {
+  margin-top: 4px;
+}
+
+/* Everything already working, folded away by default. */
+.power-done {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+}
+.power-done > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--tap);
+  padding: 0 14px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.power-done-count {
+  color: var(--ok);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.power-done-list {
+  margin: 0;
+  padding: 0 16px 14px 34px;
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.power-done-list li {
+  overflow-wrap: anywhere;
+}
+
 /* --------------------------------------------------------- diff highlighting */
 
 /* Tool output from write_file / edit_file / patch_file carries a unified-diff

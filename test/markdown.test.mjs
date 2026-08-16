@@ -17,6 +17,11 @@ import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
+const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src");
+// The same table the daemon serves at /assets/i18n.json, handed to the app below
+// through a stubbed fetch, so the real loadI18n() path is what gets tested.
+const { DICT } = await import("../src/i18n.js");
+
 /* ------------------------------------------------------------------ DOM stub */
 
 class StubNode {
@@ -25,6 +30,7 @@ class StubNode {
     this.children = [];
     this.attrs = {};
     this.className = "";
+    this.dataset = {};
     this.classes = new Set();
     this.classList = {
       add: (...c) => c.forEach((x) => this.classes.add(x)),
@@ -99,6 +105,10 @@ function loadApp() {
       if (!byId.has(id)) byId.set(id, new StubNode("div"));
       return byId.get(id);
     },
+    // applyI18n() walks these at boot. Empty is correct here: this stub has no
+    // markup, and the point of these tests is the renderer, not the labels.
+    querySelectorAll: () => [],
+    querySelector: () => null,
     addEventListener() {},
     documentElement: new StubNode("html"),
     visibilityState: "visible",
@@ -126,8 +136,13 @@ function loadApp() {
     },
     location: { href: "http://127.0.0.1:8787/", pathname: "/", hash: "", search: "" },
     history: { replaceState() {} },
-    navigator: { clipboard: { writeText: async () => {} } },
-    fetch: async () => {
+    navigator: { clipboard: { writeText: async () => {} }, language: "en" },
+    fetch: async (url) => {
+      // The one request app.js makes before anything is drawn. Answering it with
+      // the real table means loadI18n() itself is under test, not a stand-in.
+      if (String(url).includes("i18n.json")) {
+        return { ok: true, json: async () => ({ langs: ["vi", "en"], default: "vi", dict: DICT }) };
+      }
       throw new Error("no network in tests");
     },
     URL,
@@ -160,6 +175,9 @@ function loadApp() {
 }
 
 const app = loadApp();
+// loadI18n() is awaited inside app.js's top-level async block, so give that block
+// a turn to finish before any test reads a translated string.
+await new Promise((resolve) => setImmediate(resolve));
 
 /** Compact tree dump: "ul[md-list] > li:'a', li:'b'" is easier to assert on. */
 function shape(node) {
@@ -347,4 +365,125 @@ test("every id app.js asks for exists in index.html", () => {
 
   const missing = [...ids].filter((id) => !html.includes(`id="${id}"`)).sort();
   assert.deepEqual(missing, [], `index.html has no element with id: ${missing.join(", ")}`);
+});
+
+/* -------------------------------------------------------------------- i18n */
+
+test("every data-i18n key in index.html is defined in both languages", () => {
+  const html = fs.readFileSync(path.join(SRC, "web", "index.html"), "utf8");
+  const keys = new Set();
+  for (const attr of ["data-i18n", "data-i18n-ph", "data-i18n-aria"]) {
+    for (const m of html.matchAll(new RegExp(`${attr}="([^"]+)"`, "g"))) keys.add(m[1]);
+  }
+  assert.ok(keys.size > 50, `only ${keys.size} keys marked up; the pass looks incomplete`);
+
+  for (const lang of ["vi", "en"]) {
+    const missing = [...keys].filter((k) => !(k in DICT[lang])).sort();
+    assert.deepEqual(missing, [], `${lang} has no text for: ${missing.join(", ")}`);
+  }
+});
+
+test("every key app.js asks t() for is defined", () => {
+  // The mirror of the test above: markup keys and code keys both have to exist,
+  // or half the UI silently renders dotted key names.
+  const js = fs.readFileSync(path.join(SRC, "web", "app.js"), "utf8");
+  const keys = new Set(Array.from(js.matchAll(/\bt\("([a-z][a-zA-Z0-9_.]+)"/g), (m) => m[1]));
+  assert.ok(keys.size > 30, `only ${keys.size} t() calls found; the pattern probably broke`);
+
+  for (const lang of ["vi", "en"]) {
+    const missing = [...keys].filter((k) => !(k in DICT[lang])).sort();
+    assert.deepEqual(missing, [], `${lang} has no text for: ${missing.join(", ")}`);
+  }
+});
+
+test("no English UI text is left hardcoded where a key exists", () => {
+  // Not a general lint - just the specific strings that used to be inline and
+  // would silently stay English after a language switch.
+  const js = fs.readFileSync(path.join(SRC, "web", "app.js"), "utf8");
+  const banned = [
+    '"Working\\u2026"',
+    '"Session deleted"',
+    '"Config reloaded from disk"',
+    '"Allow"',
+    '"Deny"',
+    '"Show"',
+    '"Hide"',
+    '"Copied"',
+    '"Test failed."',
+    '"Connection OK."',
+    '"Downloading\\u2026"',
+    '"No messages yet. Describe what you want changed."',
+    '"Not running under Termux',
+  ];
+  for (const s of banned) {
+    assert.ok(!js.includes(s), `app.js still hardcodes ${s}; it should call t()`);
+  }
+});
+
+test("the app loads the real table and t() resolves through it", () => {
+  assert.equal(typeof app.t, "function");
+  assert.equal(typeof app.applyI18n, "function");
+  assert.equal(app.normaliseLang("vi-VN"), "vi");
+  assert.equal(app.normaliseLang("en-GB"), "en");
+  assert.equal(app.normaliseLang("de"), "vi", "an unsupported language falls back to Vietnamese");
+
+  // navigator.language is "en" in the stub, so that is the language it picked.
+  assert.equal(app.t("tab.chat"), DICT.en["tab.chat"]);
+  assert.equal(app.t("common.size", { n: 7 }), "7 MB");
+  // A key with no entry comes back as itself, so a bug is visible rather than blank.
+  assert.equal(app.t("no.such.key"), "no.such.key");
+});
+
+test("applyI18n fills text, placeholders and aria-labels, and skips unknown keys", () => {
+  const text = new StubNode("button");
+  text.textContent = "Chat";
+  text.dataset.i18n = "tab.chat";
+
+  const ph = new StubNode("textarea");
+  ph.dataset.i18nPh = "chat.placeholder";
+
+  const aria = new StubNode("div");
+  aria.dataset.i18nAria = "chat.conversation";
+
+  const unknown = new StubNode("p");
+  unknown.textContent = "left alone";
+  unknown.dataset.i18n = "no.such.key";
+
+  const root = {
+    querySelectorAll: (sel) =>
+      sel === "[data-i18n]" ? [text, unknown] : sel === "[data-i18n-ph]" ? [ph] : [aria],
+  };
+
+  app.setLang("vi", { persistToServer: false });
+  app.applyI18n(root);
+  assert.equal(text.textContent, DICT.vi["tab.chat"]);
+  assert.equal(ph.getAttribute("placeholder"), DICT.vi["chat.placeholder"]);
+  assert.equal(aria.getAttribute("aria-label"), DICT.vi["chat.conversation"]);
+  // A key with no translation must not blank the fallback already in the HTML.
+  assert.equal(unknown.textContent, "left alone");
+
+  // Switching is instant: both tables are already in memory, no refetch.
+  app.setLang("en", { persistToServer: false });
+  app.applyI18n(root);
+  assert.equal(text.textContent, DICT.en["tab.chat"]);
+  assert.equal(ph.getAttribute("placeholder"), DICT.en["chat.placeholder"]);
+});
+
+test("the three tabs are declared once and switchTab is not hardcoded to two", () => {
+  // switchTab used to resolve anything that was not "chat" to settings, so a
+  // third tab was impossible without rewriting it.
+  const js = fs.readFileSync(path.join(SRC, "web", "app.js"), "utf8");
+  assert.match(js, /const TABS = \[/, "tabs should come from a table");
+  for (const name of ["chat", "power", "settings"]) {
+    assert.ok(js.includes(`name: "${name}"`), `TABS is missing ${name}`);
+  }
+  const html = fs.readFileSync(path.join(SRC, "web", "index.html"), "utf8");
+  for (const id of ["tab-power", "panel-power"]) {
+    assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
+  }
+  // aria-controls must point at something that exists, or the tablist lies to
+  // assistive tech.
+  for (const m of html.matchAll(/aria-controls="([^"]+)"/g)) {
+    assert.ok(html.includes(`id="${m[1]}"`), `aria-controls="${m[1]}" has no target`);
+  }
 });

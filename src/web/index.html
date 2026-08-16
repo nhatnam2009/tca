@@ -20,18 +20,18 @@
     <link rel="stylesheet" href="/assets/style.css" />
   </head>
   <body>
-    <a class="skip-link" href="#composer-input">Skip to message composer</a>
+    <a class="skip-link" href="#composer-input" data-i18n="app.skipToComposer">Skip to message composer</a>
 
     <!-- ============================================================ token gate -->
     <section id="token-gate" class="gate" aria-labelledby="gate-title" hidden>
       <form id="token-form" class="gate-card" autocomplete="off">
-        <h1 id="gate-title">Access token needed</h1>
-        <p class="muted">
+        <h1 id="gate-title" data-i18n="gate.title">Access token needed</h1>
+        <p class="muted" data-i18n="gate.help">
           The daemon prints a URL like
           <code>http://127.0.0.1:8787/?token=&hellip;</code> when it starts.
           Open that URL, or paste just the token here.
         </p>
-        <label for="token-input">Access token</label>
+        <label for="token-input" data-i18n="gate.label">Access token</label>
         <input
           id="token-input"
           name="token"
@@ -45,16 +45,22 @@
           aria-describedby="token-error"
         />
         <p id="token-error" class="error-text" role="alert" hidden></p>
-        <button type="submit" class="btn primary block">Save token</button>
+        <button type="submit" class="btn primary block" data-i18n="gate.save">Save token</button>
       </form>
     </section>
 
     <div id="app" class="app" hidden>
-      
+
       <!-- ============================================================== tabs -->
-      <nav id="tabbar" class="sidebar" role="tablist" aria-label="Sections">
+      <nav
+        id="tabbar"
+        class="sidebar"
+        role="tablist"
+        aria-label="Sections"
+        data-i18n-aria="app.sections"
+      >
         <div class="sidebar-header">
-          <h2>TCA Agent</h2>
+          <h2 data-i18n="app.name">TCA Agent</h2>
         </div>
         <div class="sidebar-nav">
 
@@ -65,8 +71,21 @@
           role="tab"
           aria-selected="true"
           aria-controls="panel-chat"
+          data-i18n="tab.chat"
         >
           Chat
+        </button>
+        <button
+          id="tab-power"
+          class="tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-power"
+          tabindex="-1"
+          data-i18n="tab.power"
+        >
+          Power
         </button>
         <button
           id="tab-settings"
@@ -76,6 +95,7 @@
           aria-selected="false"
           aria-controls="panel-settings"
           tabindex="-1"
+          data-i18n="tab.settings"
         >
           Settings
         </button>
@@ -95,12 +115,12 @@
         hidden
       >
         <header class="wizard-head">
-          <h1 id="wizard-title" class="h1">Set up a model</h1>
+          <h1 id="wizard-title" class="h1" data-i18n="wizard.title">Set up a model</h1>
           <ol id="wizard-steps" class="steps">
-            <li id="wizard-tick-1" class="step">Model</li>
-            <li id="wizard-tick-2" class="step">Key</li>
-            <li id="wizard-tick-3" class="step">Model id</li>
-            <li id="wizard-tick-4" class="step">Test</li>
+            <li id="wizard-tick-1" class="step" data-i18n="wizard.step.model">Model</li>
+            <li id="wizard-tick-2" class="step" data-i18n="wizard.step.key">Key</li>
+            <li id="wizard-tick-3" class="step" data-i18n="wizard.step.modelId">Model id</li>
+            <li id="wizard-tick-4" class="step" data-i18n="wizard.step.test">Test</li>
           </ol>
           <p
             id="wizard-status"
@@ -113,8 +133,8 @@
         <div class="wizard-body">
           <!-- ---------------------------------------------------- step 1 -->
           <div id="wizard-1" class="wstep">
-            <h2 class="h2">Choose a model</h2>
-            <p class="muted small">
+            <h2 class="h2" data-i18n="wizard.s1.title">Choose a model</h2>
+            <p class="muted small" data-i18n="wizard.s1.hint">
               Tap one. Nothing is saved until the last step.
             </p>
             <div id="wiz-recommended" class="cards"></div>
@@ -124,6 +144,7 @@
               type="button"
               aria-expanded="false"
               aria-controls="wiz-all"
+              data-i18n="wizard.s1.showAll"
             >
               Show all providers
             </button>
@@ -132,13 +153,13 @@
 
           <!-- ---------------------------------------------------- step 2 -->
           <div id="wizard-2" class="wstep" hidden>
-            <h2 class="h2">Paste your API key</h2>
+            <h2 class="h2" data-i18n="wizard.s2.title">Paste your API key</h2>
             <p id="wiz-chosen-2" class="chosen"></p>
             <p id="wiz-provider-note" class="muted small"></p>
             <p id="wiz-key-link" class="small"></p>
 
             <div id="wiz-other-fields" hidden>
-              <label for="wiz-label">Name for this provider</label>
+              <label for="wiz-label" data-i18n="wizard.s2.nameLabel">Name for this provider</label>
               <input
                 id="wiz-label"
                 type="text"
@@ -148,11 +169,11 @@
                 placeholder="custom"
                 aria-describedby="wiz-label-hint"
               />
-              <p id="wiz-label-hint" class="muted small">
+              <p id="wiz-label-hint" class="muted small" data-i18n="wizard.s2.nameHint">
                 Used as the key in the config file.
               </p>
 
-              <label for="wiz-baseurl">Base URL</label>
+              <label for="wiz-baseurl" data-i18n="wizard.s2.baseUrlLabel">Base URL</label>
               <input
                 id="wiz-baseurl"
                 type="url"
@@ -163,14 +184,14 @@
                 placeholder="https://host/v1"
               />
 
-              <label for="wiz-kind">API kind</label>
+              <label for="wiz-kind" data-i18n="wizard.s2.kindLabel">API kind</label>
               <select id="wiz-kind">
                 <option value="openai">openai (OpenAI-compatible)</option>
                 <option value="anthropic">anthropic</option>
               </select>
             </div>
 
-            <label for="wiz-apikey">API key</label>
+            <label for="wiz-apikey" data-i18n="wizard.s2.keyLabel">API key</label>
             <div class="row">
               <input
                 id="wiz-apikey"
@@ -187,11 +208,12 @@
                 class="btn"
                 type="button"
                 aria-pressed="false"
+                data-i18n="provider.show"
               >
                 Show
               </button>
             </div>
-            <p id="wiz-key-hint" class="muted small">
+            <p id="wiz-key-hint" class="muted small" data-i18n="wizard.s2.keyHint">
               Stored in the config file. You can also enter
               <code>${ENV_NAME}</code> to read it from an environment variable
               instead.
@@ -201,11 +223,11 @@
 
           <!-- ---------------------------------------------------- step 3 -->
           <div id="wizard-3" class="wstep" hidden>
-            <h2 class="h2">Pick a model</h2>
+            <h2 class="h2" data-i18n="wizard.s3.title">Pick a model</h2>
             <p id="wiz-chosen-3" class="chosen"></p>
 
             <div id="wiz-local-fields" hidden>
-              <label for="wiz-local-baseurl">Server URL</label>
+              <label for="wiz-local-baseurl" data-i18n="wizard.s3.serverUrlLabel">Server URL</label>
               <input
                 id="wiz-local-baseurl"
                 type="url"
@@ -215,19 +237,19 @@
                 spellcheck="false"
                 aria-describedby="wiz-local-hint"
               />
-              <p id="wiz-local-hint" class="muted small">
+              <p id="wiz-local-hint" class="muted small" data-i18n="wizard.s3.serverUrlHint">
                 Use your computer&rsquo;s LAN address to drive a desktop GPU from
                 the phone.
               </p>
-              <button id="btn-wiz-live" class="btn block" type="button">
+              <button id="btn-wiz-live" class="btn block" type="button" data-i18n="wizard.s3.askModels">
                 Ask the server which models it has
               </button>
             </div>
 
-            <label for="wiz-model-select">Models</label>
+            <label for="wiz-model-select" data-i18n="wizard.s3.modelsLabel">Models</label>
             <select id="wiz-model-select"></select>
 
-            <label for="wiz-model">Model id</label>
+            <label for="wiz-model" data-i18n="wizard.s3.modelIdLabel">Model id</label>
             <input
               id="wiz-model"
               type="text"
@@ -243,12 +265,12 @@
 
           <!-- ---------------------------------------------------- step 4 -->
           <div id="wizard-4" class="wstep" hidden>
-            <h2 class="h2">Test and finish</h2>
+            <h2 class="h2" data-i18n="wizard.s4.title">Test and finish</h2>
             <dl id="wiz-summary" class="summary"></dl>
-            <button id="btn-wiz-test" class="btn primary block" type="button">
+            <button id="btn-wiz-test" class="btn primary block" type="button" data-i18n="provider.test">
               Test connection
             </button>
-            <p class="muted small">
+            <p class="muted small" data-i18n="wizard.s4.hint">
               Sends one 1-token request so a wrong key shows up now, not
               mid-task.
             </p>
@@ -263,13 +285,13 @@
         </div>
 
         <div class="wizard-actions row">
-          <button id="btn-wiz-back" class="btn" type="button">Back</button>
-          <button id="btn-wiz-next" class="btn primary grow" type="button">
+          <button id="btn-wiz-back" class="btn" type="button" data-i18n="wizard.back">Back</button>
+          <button id="btn-wiz-next" class="btn primary grow" type="button" data-i18n="wizard.next">
             Next
           </button>
         </div>
         <p class="wizard-escape">
-          <button id="btn-wiz-skip" class="btn link" type="button">
+          <button id="btn-wiz-skip" class="btn link" type="button" data-i18n="wizard.skip">
             Skip, I&rsquo;ll configure it myself
           </button>
         </p>
@@ -284,10 +306,10 @@
       >
         <header class="chat-header">
           <div class="row">
-            <label class="sr-only" for="session-select">Session</label>
+            <label class="sr-only" for="session-select" data-i18n="chat.session">Session</label>
             <select id="session-select" class="grow"></select>
-            <button id="btn-new-session" class="btn" type="button">New</button>
-            <button id="btn-delete-session" class="btn danger" type="button">
+            <button id="btn-new-session" class="btn" type="button" data-i18n="chat.new">New</button>
+            <button id="btn-delete-session" class="btn danger" type="button" data-i18n="chat.delete">
               Delete
             </button>
           </div>
@@ -300,13 +322,14 @@
           class="messages"
           role="log"
           aria-label="Conversation"
+          data-i18n-aria="chat.conversation"
           aria-live="polite"
           aria-relevant="additions text"
           tabindex="0"
         ></div>
 
         <div class="composer-wrap">
-          <button id="jump-latest" class="jump" type="button" hidden>
+          <button id="jump-latest" class="jump" type="button" hidden data-i18n="chat.jumpLatest">
             Jump to latest
           </button>
           <div class="statusbar">
@@ -317,28 +340,48 @@
               hidden
             ></span>
             <p id="stream-status" class="status" role="status" aria-live="polite"></p>
-            <button id="btn-stop" class="btn stop danger" type="button" hidden>
+            <button id="btn-stop" class="btn stop danger" type="button" hidden data-i18n="chat.stop">
               Stop
             </button>
           </div>
           <form id="composer" class="composer">
-            <label class="sr-only" for="composer-input">Message</label>
+            <label class="sr-only" for="composer-input" data-i18n="chat.messageLabel">Message</label>
             <textarea
               id="composer-input"
               name="text"
               rows="1"
               placeholder="Ask the agent to change something&hellip;"
+              data-i18n-ph="chat.placeholder"
               autocapitalize="sentences"
               spellcheck="true"
               aria-describedby="composer-hint"
             ></textarea>
-            <button id="btn-send" class="btn primary" type="submit">Send</button>
-            <p id="composer-hint" class="sr-only">
+            <button id="btn-send" class="btn primary" type="submit" data-i18n="chat.send">Send</button>
+            <p id="composer-hint" class="sr-only" data-i18n="chat.composerHint">
               Enter inserts a new line. Press the Send button, or Control plus
               Enter, to send.
             </p>
           </form>
         </div>
+      </section>
+
+      <!-- ============================================================= power -->
+      <!--
+        Device capability: what the agent could do here and what is missing, with
+        a one-tap install for each gap. Filled entirely from GET /api/capabilities.
+      -->
+      <section
+        id="panel-power"
+        class="panel power"
+        role="tabpanel"
+        aria-labelledby="tab-power"
+        hidden
+      >
+        <h1 class="h1" data-i18n="tab.power">Power</h1>
+        <div id="power-body"></div>
+        <button id="btn-recheck-power" class="btn block" type="button" data-i18n="common.recheck">
+          Recheck
+        </button>
       </section>
 
       <!-- ========================================================== settings -->
@@ -350,40 +393,49 @@
         hidden
       >
         <form id="settings-form" autocomplete="off">
-          <h1 class="h1">Settings</h1>
+          <h1 class="h1" data-i18n="settings.title">Settings</h1>
 
           <p class="path-note">
-            Config file:
+            <span data-i18n="settings.configFile">Config file:</span>
             <code id="cfg-path" class="path">&hellip;</code>
           </p>
-          <p class="muted small">
+          <p class="muted small" data-i18n="settings.handEdit">
             This file is plain JSON &mdash; you can also edit it by hand with any
             text editor and press &ldquo;Reload from disk&rdquo;.
           </p>
           <p id="shared-storage-note" class="warn small" hidden></p>
 
-          <fieldset>
-            <legend>Provider</legend>
+          <label for="cfg-lang" data-i18n="settings.langLabel">Language</label>
+          <select id="cfg-lang" aria-describedby="lang-hint">
+            <option value="vi">Tiếng Việt</option>
+            <option value="en">English</option>
+          </select>
+          <p id="lang-hint" class="muted small" data-i18n="settings.langHint">
+            Applies to the web UI and to tca doctor in the terminal.
+          </p>
 
-            <label for="active-provider">Active provider</label>
+          <fieldset>
+            <legend data-i18n="provider.legend">Provider</legend>
+
+            <label for="active-provider" data-i18n="provider.active">Active provider</label>
             <select id="active-provider"></select>
 
             <div class="row">
-              <button id="btn-add-provider" class="btn" type="button">
+              <button id="btn-add-provider" class="btn" type="button" data-i18n="provider.add">
                 Add provider
               </button>
-              <button id="btn-remove-provider" class="btn danger" type="button">
+              <button id="btn-remove-provider" class="btn danger" type="button" data-i18n="provider.remove">
                 Remove
               </button>
             </div>
 
-            <label for="prov-kind">API kind</label>
+            <label for="prov-kind" data-i18n="provider.kind">API kind</label>
             <select id="prov-kind">
               <option value="anthropic">anthropic</option>
               <option value="openai">openai (OpenAI-compatible)</option>
             </select>
 
-            <label for="prov-baseurl">Base URL</label>
+            <label for="prov-baseurl" data-i18n="provider.baseUrl">Base URL</label>
             <input
               id="prov-baseurl"
               type="url"
@@ -394,7 +446,7 @@
               placeholder="https://api.anthropic.com"
             />
 
-            <label for="prov-apikey">API key</label>
+            <label for="prov-apikey" data-i18n="provider.apiKey">API key</label>
             <div class="row">
               <input
                 id="prov-apikey"
@@ -411,22 +463,23 @@
                 class="btn"
                 type="button"
                 aria-pressed="false"
+                data-i18n="provider.show"
               >
                 Show
               </button>
             </div>
-            <p id="apikey-hint" class="muted small">
+            <p id="apikey-hint" class="muted small" data-i18n="provider.apiKeyHint">
               Leave untouched to keep the key already stored on the server. You
               can also enter <code>${ENV_NAME}</code> to read it from an
               environment variable instead of storing it.
             </p>
 
-            <label for="model-picker">Model</label>
+            <label for="model-picker" data-i18n="provider.model">Model</label>
             <select id="model-picker" aria-describedby="model-picker-note">
             </select>
             <p id="model-picker-note" class="muted small"></p>
 
-            <label for="prov-model">Model id (active)</label>
+            <label for="prov-model" data-i18n="provider.modelId">Model id (active)</label>
             <div class="row">
               <input
                 id="prov-model"
@@ -438,12 +491,12 @@
                 spellcheck="false"
                 aria-describedby="prov-model-hint"
               />
-              <button id="btn-save-model-id" class="btn" type="button">
+              <button id="btn-save-model-id" class="btn" type="button" data-i18n="provider.saveId">
                 + Save
               </button>
             </div>
             <datalist id="model-list"></datalist>
-            <p id="prov-model-hint" class="muted small">
+            <p id="prov-model-hint" class="muted small" data-i18n="provider.modelIdHint">
               Catalogs go stale, so any model id you type here is kept as-is.
               Tap &ldquo;+ Save&rdquo; to keep it in the list below for quick
               switching, without losing the others.
@@ -451,14 +504,14 @@
             <div id="saved-model-ids" class="chips"></div>
 
             <div class="row">
-              <button id="btn-test-provider" class="btn" type="button">
+              <button id="btn-test-provider" class="btn" type="button" data-i18n="provider.test">
                 Test connection
               </button>
-              <button id="btn-refresh-live" class="btn" type="button">
+              <button id="btn-refresh-live" class="btn" type="button" data-i18n="provider.refreshLive">
                 Refresh from provider
               </button>
             </div>
-            <p id="provider-test-hint" class="muted small">
+            <p id="provider-test-hint" class="muted small" data-i18n="provider.testHint">
               Test uses the provider as already saved on the server &mdash; save
               first if you just changed the key.
             </p>
@@ -470,7 +523,7 @@
               hidden
             ></p>
 
-            <label for="prov-maxtokens">Max output tokens</label>
+            <label for="prov-maxtokens" data-i18n="provider.maxTokens">Max output tokens</label>
             <input
               id="prov-maxtokens"
               type="number"
@@ -482,9 +535,9 @@
           </fieldset>
 
           <fieldset>
-            <legend>Model catalog</legend>
+            <legend data-i18n="catalog.legend">Model catalog</legend>
 
-            <label for="model-search">Search every provider</label>
+            <label for="model-search" data-i18n="catalog.search">Search every provider</label>
             <input
               id="model-search"
               type="search"
@@ -492,41 +545,41 @@
               autocorrect="off"
               spellcheck="false"
               placeholder="kimi, sonnet, qwen&hellip;"
+              data-i18n-ph="catalog.searchPlaceholder"
               aria-describedby="model-search-hint"
             />
-            <p id="model-search-hint" class="muted small">
+            <p id="model-search-hint" class="muted small" data-i18n="catalog.searchHint">
               Finds a model when you know its name but not the vendor.
             </p>
             <p id="model-search-note" class="warn small" role="status" hidden></p>
             <div id="model-search-results" class="hits"></div>
 
             <p id="catalog-info" class="muted small"></p>
-            <button id="btn-download-catalog" class="btn block" type="button">
+            <button id="btn-download-catalog" class="btn block" type="button" data-i18n="catalog.download">
               Download full catalog (3.8 MB)
             </button>
-            <p class="muted small">
+            <p class="muted small" data-i18n="catalog.downloadHint">
               The bundled list covers the popular models offline. Downloading the
               full models.dev catalog uses about 3.8 MB of data.
             </p>
           </fieldset>
 
           <fieldset>
-            <legend>Android status</legend>
-            <p class="muted small">
-              Environment checks &mdash; same as <code>tca doctor</code> in the
-              terminal, including whether the ADB unlocks from
-              <code>tca adb-setup</code> are still applied.
+            <legend data-i18n="status.legend">Android status</legend>
+            <p class="muted small" data-i18n="status.hint">
+              Environment checks &mdash; the same as <code>tca doctor</code> in the
+              terminal.
             </p>
             <div id="status-list" class="status-list"></div>
-            <button id="btn-recheck-status" class="btn block" type="button">
+            <button id="btn-recheck-status" class="btn block" type="button" data-i18n="common.recheck">
               Recheck
             </button>
           </fieldset>
 
           <fieldset>
-            <legend>Agent</legend>
+            <legend data-i18n="agent.legend">Agent</legend>
 
-            <label for="cfg-workspace">Workspace directory</label>
+            <label for="cfg-workspace" data-i18n="agent.workspace">Workspace directory</label>
             <input
               id="cfg-workspace"
               type="text"
@@ -535,7 +588,7 @@
               spellcheck="false"
               aria-describedby="workspace-hint"
             />
-            <p id="workspace-hint" class="muted small">
+            <p id="workspace-hint" class="muted small" data-i18n="agent.workspaceHint">
               The agent may only read and write inside this directory.
             </p>
 
@@ -545,9 +598,9 @@
                 type="checkbox"
                 aria-describedby="autoapprove-hint"
               />
-              <label for="cfg-autoapprove">Auto-approve shell commands</label>
+              <label for="cfg-autoapprove" data-i18n="agent.autoApprove">Auto-approve shell commands</label>
             </div>
-            <p id="autoapprove-hint" class="muted small">
+            <p id="autoapprove-hint" class="muted small" data-i18n="agent.autoApproveHint">
               Off (recommended): the agent asks you before running any shell
               command. On: it runs commands immediately, without asking.
             </p>
@@ -558,15 +611,15 @@
                 type="checkbox"
                 aria-describedby="autoapprove-edits-hint"
               />
-              <label for="cfg-autoapprove-edits">Auto-approve file changes</label>
+              <label for="cfg-autoapprove-edits" data-i18n="agent.autoApproveEdits">Auto-approve file changes</label>
             </div>
-            <p id="autoapprove-edits-hint" class="muted small">
+            <p id="autoapprove-edits-hint" class="muted small" data-i18n="agent.autoApproveEditsHint">
               On (default): the agent writes, edits, moves and deletes files in the
               workspace without asking. Turn it off to confirm each change &mdash;
               safer, but a lot of tapping.
             </p>
 
-            <label for="cfg-maxsteps">Max steps per turn</label>
+            <label for="cfg-maxsteps" data-i18n="agent.maxSteps">Max steps per turn</label>
             <input
               id="cfg-maxsteps"
               type="number"
@@ -576,17 +629,17 @@
               inputmode="numeric"
             />
 
-            <label for="cfg-instructions">Extra instructions</label>
+            <label for="cfg-instructions" data-i18n="agent.instructions">Extra instructions</label>
             <textarea
               id="cfg-instructions"
               rows="4"
               aria-describedby="instructions-hint"
             ></textarea>
-            <p id="instructions-hint" class="muted small">
+            <p id="instructions-hint" class="muted small" data-i18n="agent.instructionsHint">
               Appended to the system prompt for every session.
             </p>
 
-            <label for="cfg-deny">Denied commands</label>
+            <label for="cfg-deny" data-i18n="agent.deny">Denied commands</label>
             <textarea
               id="cfg-deny"
               rows="4"
@@ -595,17 +648,17 @@
               spellcheck="false"
               aria-describedby="deny-hint"
             ></textarea>
-            <p id="deny-hint" class="muted small">
+            <p id="deny-hint" class="muted small" data-i18n="agent.denyHint">
               One regular expression per line. Matching commands are always
               blocked, even with auto-approve on.
             </p>
           </fieldset>
 
           <div class="row sticky-actions">
-            <button id="btn-save-config" class="btn primary grow" type="submit">
+            <button id="btn-save-config" class="btn primary grow" type="submit" data-i18n="settings.save">
               Save settings
             </button>
-            <button id="btn-reload-config" class="btn" type="button">
+            <button id="btn-reload-config" class="btn" type="button" data-i18n="settings.reload">
               Reload from disk
             </button>
           </div>
