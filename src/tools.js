@@ -16,6 +16,7 @@ import { rgGlob, rgSearch } from "./fastsearch.js";
 import { writeTodos } from "./store.js";
 import { search as webSearch } from "./websearch.js";
 import { diagnose, formatDiagnoses } from "./diagnostics.js";
+import { recordFileChange } from "./undo.js";
 
 export { pickShell };
 
@@ -411,6 +412,17 @@ export const TOOLS = {
       await fsp.mkdir(path.dirname(abs), { recursive: true });
       const previous = await fsp.readFile(abs, "utf8").catch(() => null);
       await fsp.writeFile(abs, content, "utf8");
+      if (ctx.sessionId) {
+        await recordFileChange({
+          sessionId: ctx.sessionId,
+          turn: ctx.turn || 1,
+          tool: "write_file",
+          relPath: p,
+          beforeContent: previous,
+          afterContent: content,
+          workspace: ctx.workspace,
+        }).catch(() => {});
+      }
       const lines = content ? content.replace(/\n$/, "").split("\n").length : 0;
       if (previous === null) return `Created ${p} (${lines} lines, ${content.length} bytes)`;
       const diff = changeSummary(previous, content);
@@ -450,6 +462,17 @@ export const TOOLS = {
       }
       const next = replace_all ? text.split(old_string).join(new_string) : text.replace(old_string, new_string);
       await fsp.writeFile(abs, next, "utf8");
+      if (ctx.sessionId) {
+        await recordFileChange({
+          sessionId: ctx.sessionId,
+          turn: ctx.turn || 1,
+          tool: "edit_file",
+          relPath: p,
+          beforeContent: text,
+          afterContent: next,
+          workspace: ctx.workspace,
+        }).catch(() => {});
+      }
       const n = replace_all ? count : 1;
       const head = `Edited ${p} (${n} replacement${n > 1 ? "s" : ""})`;
       const diff = changeSummary(text, next);
@@ -743,6 +766,17 @@ export const TOOLS = {
       });
       const { text, applied, shifted } = applyUnifiedDiff(original, String(diff));
       await fsp.writeFile(abs, text, "utf8");
+      if (ctx.sessionId) {
+        await recordFileChange({
+          sessionId: ctx.sessionId,
+          turn: ctx.turn || 1,
+          tool: "patch_file",
+          relPath: p,
+          beforeContent: original,
+          afterContent: text,
+          workspace: ctx.workspace,
+        }).catch(() => {});
+      }
       const note = shifted ? ` (${shifted} hunk(s) matched at a shifted line number)` : "";
       const summary = changeSummary(original, text);
       const head = `Applied ${applied} hunk(s) to ${p}${note}`;

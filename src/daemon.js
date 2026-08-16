@@ -19,9 +19,9 @@ import { RECOMMENDED } from "./recommended.js";
 import { addProvider, testProvider, seedFromEnv } from "./setup.js";
 import { createSession, listSessions, getSession, deleteSession } from "./store.js";
 import { Runner } from "./loop.js";
-import { getStatus } from "./status.js";
 import { DICT, LANGS, DEFAULT_LANG } from "./i18n.js";
 import { discoverOrCache } from "./discover.js";
+import { undoLastTurn, redoLastTurn, getUndoHistory } from "./undo.js";
 
 const WEB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "web");
 const VERSION = "0.1.0";
@@ -314,6 +314,20 @@ export async function serve(opts = {}) {
       if (method === "POST" && sub === "/abort") {
         runners.get(id)?.abort();
         return json(res, 200, { ok: true });
+      }
+      if (method === "POST" && sub === "/undo") {
+        const { config } = loadConfig();
+        const resUndo = await undoLastTurn(id, config.workspace);
+        return json(res, resUndo.ok ? 200 : (resUndo.conflict ? 409 : 400), resUndo);
+      }
+      if (method === "POST" && sub === "/redo") {
+        const { config } = loadConfig();
+        const resRedo = await redoLastTurn(id, config.workspace);
+        return json(res, resRedo.ok ? 200 : (resRedo.conflict ? 409 : 400), resRedo);
+      }
+      if (method === "GET" && sub === "/undo") {
+        const history = await getUndoHistory(id);
+        return json(res, 200, { history });
       }
     }
 

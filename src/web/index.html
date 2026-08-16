@@ -380,6 +380,27 @@
             ></textarea>
             <div class="composer-actions">
               <button
+                id="btn-undo"
+                class="btn icon-btn"
+                type="button"
+                title="Undo last turn"
+                aria-label="Undo"
+                data-i18n-aria="chat.undo"
+              >
+                <span aria-hidden="true">&#x21B6;</span>
+              </button>
+              <button
+                id="btn-redo"
+                class="btn icon-btn"
+                type="button"
+                title="Redo"
+                aria-label="Redo"
+                data-i18n-aria="chat.redo"
+                hidden
+              >
+                <span aria-hidden="true">&#x21B7;</span>
+              </button>
+              <button
                 id="btn-mode"
                 class="btn mode"
                 type="button"

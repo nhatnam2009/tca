@@ -339,6 +339,7 @@ export class Agent {
     this.running = false;
     this.seq = 0;
     this.subSeq = 0;
+    this.turn = 0;
     /** Accumulated over the whole turn, including sub-agents. */
     this.spend = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
   }
@@ -538,6 +539,7 @@ export class Agent {
 
     const workspace = this.config.workspace;
     fs.mkdirSync(workspace, { recursive: true });
+    this.turn += 1;
     const model = catalogEntry(this.config, provider);
     const contextWindow = model?.context || FALLBACK_CONTEXT_WINDOW;
 
@@ -552,6 +554,7 @@ export class Agent {
       approve: this.approve,
       signal: this.controller.signal,
       sessionId: this.sessionId,
+      turn: this.turn,
       // Straight to the UI: a plan the user cannot see is only half useful.
       onTodo: (items) => this.emit({ type: "todo", items }),
       ...(this.kind === "root" ? { spawnAgent: this.spawnAgent } : {}),

@@ -234,6 +234,13 @@ export const DICT = {
     "chat.compacted": "Đã tóm tắt: {before} → {after} token. Phần cũ vẫn còn ở trên để bạn đọc lại.",
     "chat.cacheHit": "{n} token đọc từ cache",
     "chat.noKey": "Provider đang chọn chưa có API key dùng được. Mở Cài đặt.",
+    "chat.undo": "Hoàn tác",
+    "chat.redo": "Làm lại",
+    "chat.undone": "Đã hoàn tác turn gần nhất ({count} files)",
+    "chat.redone": "Đã làm lại turn vừa hoàn tác ({count} files)",
+    "chat.undoNothing": "Không có gì để hoàn tác",
+    "chat.redoNothing": "Không có gì để làm lại",
+    "chat.undoConflict": "Xung đột: file đã bị sửa từ trước",
 
     // ---------------------------------------------------------------- mode
     "mode.build": "build",
@@ -633,6 +640,13 @@ export const DICT = {
     "chat.compacted": "Compacted: {before} \u2192 {after} tokens. The older part is still above if you want to read it.",
     "chat.cacheHit": "{n} tokens read from cache",
     "chat.noKey": "No usable API key for the active provider. Open Settings.",
+    "chat.undo": "Undo",
+    "chat.redo": "Redo",
+    "chat.undone": "Undone last turn ({count} files)",
+    "chat.redone": "Redone last turn ({count} files)",
+    "chat.undoNothing": "Nothing to undo",
+    "chat.redoNothing": "Nothing to redo",
+    "chat.undoConflict": "Conflict: files were modified externally",
 
     // ---------------------------------------------------------------- mode
     "mode.build": "build",

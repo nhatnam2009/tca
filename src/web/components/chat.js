@@ -249,7 +249,7 @@ export function render(state) {
   }
 }
 
-export function bindEvents({ onSend, onAbort, onToggleMode, onOpenSettings }) {
+export function bindEvents({ onSend, onAbort, onToggleMode, onOpenSettings, onUndo, onRedo } = {}) {
   const m = messagesEl();
   if (m) {
     m.addEventListener("scroll", () => {
@@ -294,6 +294,14 @@ export function bindEvents({ onSend, onAbort, onToggleMode, onOpenSettings }) {
   const modeBtn = $("btn-mode");
   if (modeBtn && onToggleMode) {
     modeBtn.addEventListener("click", onToggleMode);
+  }
+  const undoBtn = $("btn-undo");
+  if (undoBtn && onUndo) {
+    undoBtn.addEventListener("click", onUndo);
+  }
+  const redoBtn = $("btn-redo");
+  if (redoBtn && onRedo) {
+    redoBtn.addEventListener("click", onRedo);
   }
 }
 

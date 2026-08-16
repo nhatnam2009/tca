@@ -177,6 +177,38 @@ export async function deleteSession() {
   toast(t("chat.deleted"));
 }
 
+export async function undoSessionTurn() {
+  if (!appState.sessionId) return;
+  try {
+    const res = await api(`/api/sessions/${encodeURIComponent(appState.sessionId)}/undo`, { method: "POST" });
+    if (res && res.ok) {
+      toast(t("chat.undone", { count: res.reverted ? res.reverted.length : 0 }));
+    } else if (res && res.conflict) {
+      toast(t("chat.undoConflict"), "warn");
+    } else {
+      toast(res && res.message ? res.message : t("chat.undoNothing"), "warn");
+    }
+  } catch (err) {
+    fail(err);
+  }
+}
+
+export async function redoSessionTurn() {
+  if (!appState.sessionId) return;
+  try {
+    const res = await api(`/api/sessions/${encodeURIComponent(appState.sessionId)}/redo`, { method: "POST" });
+    if (res && res.ok) {
+      toast(t("chat.redone", { count: res.reapplied ? res.reapplied.length : 0 }));
+    } else if (res && res.conflict) {
+      toast(t("chat.undoConflict"), "warn");
+    } else {
+      toast(res && res.message ? res.message : t("chat.redoNothing"), "warn");
+    }
+  } catch (err) {
+    fail(err);
+  }
+}
+
 /* ------------------------------------------------------------- stream handler */
 
 function startSessionStream(id) {
@@ -438,6 +470,8 @@ export function wire() {
     onAbort: () => Chat.abort(appState.sessionId),
     onToggleMode: () => setMode(appState.mode === "plan" ? "build" : "plan"),
     onOpenSettings: () => switchTab("settings"),
+    onUndo: () => undoSessionTurn().catch(fail),
+    onRedo: () => redoSessionTurn().catch(fail),
   });
 
   // Settings events

@@ -17,11 +17,11 @@ import { serve, getToken } from "./daemon.js";
 import { loadConfig, configPath, STATE_DIR } from "./config.js";
 import { RECOMMENDED, TIERS } from "./recommended.js";
 import { catalogInfo } from "./catalog.js";
-import { seedFromEnv } from "./setup.js";
-import { createSession } from "./store.js";
+import { createSession, listSessions } from "./store.js";
 import { Runner } from "./loop.js";
 import { getStatus } from "./status.js";
 import { getCapabilities } from "./capabilities.js";
+import { undoLastTurn, redoLastTurn } from "./undo.js";
 import {
   adbConnect,
   adbPair,
@@ -56,6 +56,12 @@ switch (command) {
     break;
   case "run":
     await cmdRun(rest);
+    break;
+  case "undo":
+    await cmdUndo(rest);
+    break;
+  case "redo":
+    await cmdRedo(rest);
     break;
   case "token":
     cmdToken();
@@ -92,6 +98,8 @@ function usage() {
 
   tca serve [--port N] [--host H]   start the daemon and print the UI URL
   tca run [--plan] "task"           one-shot turn in the terminal
+  tca undo [session-id]             revert file changes from the last turn
+  tca redo [session-id]             reapply reverted file changes
   tca token                         print the URL including the access token
   tca models                        recommended models worth using
   tca doctor                        check this device's setup
@@ -100,6 +108,48 @@ function usage() {
 
 Config: ${configPath()}
 State:  ${STATE_DIR}`);
+}
+
+async function cmdUndo(args) {
+  let sessionId = args[0];
+  if (!sessionId) {
+    const sessions = listSessions();
+    if (!sessions.length) {
+      console.error(C.red("No sessions found."));
+      process.exit(1);
+    }
+    sessionId = sessions[0].id;
+  }
+  const { config } = loadConfig();
+  const res = await undoLastTurn(sessionId, config.workspace);
+  if (res.ok) {
+    console.log(C.green(`Undone turn ${res.turn}:`));
+    for (const f of res.reverted || []) console.log(`  reverted: ${f}`);
+  } else {
+    console.error(C.red(res.message || "Undo failed."));
+    process.exit(1);
+  }
+}
+
+async function cmdRedo(args) {
+  let sessionId = args[0];
+  if (!sessionId) {
+    const sessions = listSessions();
+    if (!sessions.length) {
+      console.error(C.red("No sessions found."));
+      process.exit(1);
+    }
+    sessionId = sessions[0].id;
+  }
+  const { config } = loadConfig();
+  const res = await redoLastTurn(sessionId, config.workspace);
+  if (res.ok) {
+    console.log(C.green(`Redone turn ${res.turn}:`));
+    for (const f of res.reapplied || []) console.log(`  reapplied: ${f}`);
+  } else {
+    console.error(C.red(res.message || "Redo failed."));
+    process.exit(1);
+  }
 }
 
 async function cmdServe(args) {
