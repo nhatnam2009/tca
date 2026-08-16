@@ -12,7 +12,23 @@ workspace directory. You drive it from the phone's browser.
 One command, on a fresh Termux, start to finish:
 
 ```sh
-pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/nhatnam2009/tca/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nhatnam2009/tca/main/install.sh | bash
+```
+
+**Do not run `pkg install curl` first.** Termux ships with curl, and installing any
+single package on a system that is behind pulls a build linked against newer
+shared libraries than the rest of the system, which breaks that binary
+immediately:
+
+```
+CANNOT LINK EXECUTABLE "curl": cannot locate symbol "nghttp2_option_set_..."
+```
+
+That is Termux's cardinal rule: upgrade everything, then install. `install.sh` does
+them in that order. If you have already hit it, repair with:
+
+```sh
+pkg upgrade -y -o Dpkg::Options::=--force-confold
 ```
 
 It installs the packages, clones into `~/tca`, creates the `tca` and `nhatnam`
@@ -192,6 +208,16 @@ These cost more debugging time than anything in the code:
   system shell is `/system/bin/sh`. `pickShell()` in `src/tools.js` probes for a
   real one.
 - **Ports below 1024** are blocked without root.
+- **Never install one package onto a stale system.** This is the failure that costs
+  the most time, because the binary appears to install fine and then will not run:
+  ```
+  CANNOT LINK EXECUTABLE "curl": cannot locate symbol "nghttp2_option_set_..."
+  ```
+  A single `pkg install X` fetches the current build of X, linked against library
+  versions newer than the ones you have. `pkg upgrade` first, always. `install.sh`
+  does the full upgrade before installing anything, and checks that `curl`, `git`
+  and `node` actually *run* rather than only that they exist, so this is reported
+  as what it is instead of surfacing later as something else.
 
 ## Capabilities
 

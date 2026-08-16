@@ -2,7 +2,16 @@
 # =============================================================================
 # TCA (Termux Coding Agent) - cài đặt bằng MỘT lệnh.
 #
-#   pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/nhatnam2009/tca/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/nhatnam2009/tca/main/install.sh | bash
+#
+# ĐỪNG chạy 'pkg install curl' trước. Termux mới đã có curl sẵn, và cài lẻ một
+# gói trên hệ thống chưa nâng cấp sẽ kéo về bản mới build với thư viện mới hơn
+# phần còn lại của hệ thống — làm chính curl không chạy được nữa:
+#   CANNOT LINK EXECUTABLE "curl": cannot locate symbol "nghttp2_..."
+# Script này nâng cấp toàn bộ hệ thống TRƯỚC rồi mới cài gì, đúng thứ tự đó.
+#
+# Nếu curl bị lỗi kiểu trên rồi, sửa bằng:
+#   pkg upgrade -y -o Dpkg::Options::=--force-confold
 #
 # Hoặc nếu đã có source:
 #   bash install.sh
@@ -23,6 +32,41 @@ info() { echo -e "  ${DIM}$1${RESET}"; }
 die()  { echo -e "\n${RED}✗ $1${RESET}\n" >&2; exit 1; }
 
 in_termux() { [ -n "${TERMUX_VERSION:-}" ] && [ -n "${PREFIX:-}" ]; }
+
+# ── Lỗi lệch thư viện của Termux ─────────────────────────────────────────────
+#
+# Đây là cách hỏng phổ biến nhất trên Termux, và nó KHÔNG phải lỗi của dự án
+# này: một gói được cài lẻ trên hệ thống cũ sẽ link tới symbol chưa có trong
+# thư viện đang cài. Binary tồn tại, `command -v` thấy nó, nhưng chạy là chết.
+# Kiểm tra riêng, và nói rõ ra, thay vì để nó biểu hiện thành một lỗi khác.
+#
+# $1 = tên lệnh, $2 = tham số để thử chạy
+check_runs() {
+  local bin="$1" probe="${2:---version}" out
+  command -v "$bin" >/dev/null || return 0   # chưa cài là chuyện khác
+  if out="$("$bin" $probe 2>&1)"; then return 0; fi
+  case "$out" in
+    *"CANNOT LINK EXECUTABLE"* | *"cannot locate symbol"* | *"library"*"not found"*)
+      echo -e "\n${RED}✗ '$bin' đã cài nhưng không chạy được:${RESET}" >&2
+      echo "    $(echo "$out" | head -1)" >&2
+      cat >&2 <<DIAG
+
+  Đây là lỗi lệch thư viện của Termux, không phải lỗi của dự án này. Gói '$bin'
+  là bản mới, nhưng thư viện nó cần thì vẫn là bản cũ — xảy ra khi cài lẻ một
+  gói mà chưa nâng cấp toàn hệ thống trước.
+
+  Sửa:
+    pkg upgrade -y -o Dpkg::Options::=--force-confold
+
+  Vẫn lỗi thì cài lại chính nó cùng thư viện:
+    pkg reinstall $bin
+
+DIAG
+      return 1
+      ;;
+  esac
+  return 0
+}
 
 echo -e "${BOLD}"
 echo "  ╔════════════════════════════════════╗"
@@ -47,10 +91,17 @@ if in_termux; then
   info "đang cập nhật danh sách gói…"
   apt-get update -y "${KEEP[@]}" >/dev/null 2>&1 || warn "apt update không xong, vẫn thử tiếp"
 
-  # Nâng cấp trước khi cài nodejs: node được build với libc++ mới hơn, cài lẻ
-  # trên hệ thống cũ là gặp "CANNOT LINK EXECUTABLE" ngay.
-  info "đang nâng cấp hệ thống (có thể mất vài phút)…"
-  apt-get upgrade -y "${KEEP[@]}" >/dev/null 2>&1 || warn "apt upgrade không xong, vẫn thử tiếp"
+  # Nâng cấp TOÀN BỘ trước khi cài bất cứ gì. Đây là quy tắc số một của Termux:
+  # cài lẻ một gói trên hệ thống cũ sẽ kéo về bản mới link tới symbol chưa có
+  # trong thư viện đang cài, và binary đó chết ngay — kể cả curl.
+  #
+  # Không ẩn output: đây là bước dài nhất và cũng là bước dễ hỏng nhất, nên khi
+  # có chuyện bạn phải đọc được nó đã làm gì thay vì chỉ thấy một cảnh báo.
+  info "đang nâng cấp hệ thống (bước quan trọng nhất, có thể mất vài phút)…"
+  if ! apt-get upgrade -y "${KEEP[@]}" 2>&1 | tail -25; then
+    warn "apt upgrade không xong. Nếu bước sau lỗi thư viện, chạy lại lệnh này bằng tay:"
+    warn "  pkg upgrade -y -o Dpkg::Options::=--force-confold"
+  fi
 
   # nodejs+git là bắt buộc. Còn lại làm agent mạnh hơn rõ rệt và đều rất nhẹ:
   #   ripgrep  tool grep nhanh hơn nhiều lần thay vì tự đọc file bằng JS
@@ -87,6 +138,15 @@ fi
 # ─── 2. Kiểm tra node ────────────────────────────────────────────────────────
 
 step "Kiểm tra Node.js"
+
+# Kiểm tra lệch thư viện cho từng lệnh, trước khi dùng tới nó. Nếu curl vừa bị
+# hỏng kiểu này thì người dùng còn chẳng tải được script — nên vẫn báo rõ.
+BROKEN=0
+for bin in curl git node; do
+  check_runs "$bin" || BROKEN=1
+done
+[ "$BROKEN" -eq 0 ] || exit 1
+
 command -v node >/dev/null || die "Không có node.$(in_termux && echo '
   Chạy: pkg install nodejs')"
 command -v git >/dev/null || warn "Không có git — agent vẫn chạy nhưng bạn sẽ khó quay lại bản cũ."
