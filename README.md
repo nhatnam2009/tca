@@ -272,6 +272,15 @@ These cost more debugging time than anything in the code:
 - **No systemd.** `install.sh` installs a runit service through `termux-services`.
   Note that runit starts from `~/.bashrc`, so after a reboot it only comes up once
   you open Termux; Android has no true boot service for unprivileged apps.
+- **`which` is not there.** It is a program, not a shell builtin, and on Termux it
+  came from `debianutils` — which dropped it in 5.x in favour of `command -v`. So
+  on an up-to-date Termux there is no `which` at all, and anything that probed for
+  a binary by spawning it got "not installed" for things sitting on `PATH`. This
+  cost real time: the agent insisted `adb` was missing immediately after
+  installing it, `tca doctor` reported ripgrep and jq absent, and `tca serve`
+  silently stopped taking a wake lock. `findBinary()` in `src/privilege.js` walks
+  `PATH` itself now — no subprocess, no dependency, same answer everywhere.
+  `install.sh` never hit this because shell scripts can use the builtin.
 - **`/bin/sh` does not exist.** Termux keeps its userland in `$PREFIX` and the
   system shell is `/system/bin/sh`. `pickShell()` in `src/tools.js` probes for a
   real one.

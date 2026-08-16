@@ -35,6 +35,9 @@ const {
   readAdbAddress,
   forgetAdbAddress,
   adbReconnect,
+  findBinary,
+  hasBinary,
+  hasBinaryAsync,
 } = await import("../src/privilege.js");
 const { getStatus } = await import("../src/status.js");
 const { serve } = await import("../src/daemon.js");
@@ -613,4 +616,63 @@ test("the startup question and the wizard share one stdin reader", () => {
   // And nothing may call rl.close() directly inside the wizard any more.
   const wizard = js.slice(js.indexOf("async function cmdAdbSetup("));
   assert.ok(!wizard.includes("rl.close()") || wizard.includes("if (!borrowed) rl.close()"), "close goes through done()");
+});
+
+/**
+ * Finding a binary without asking `which`.
+ *
+ * This is the bug behind "it cannot tell whether adb is installed". hasBinary
+ * used to spawn `which`, which is not a shell builtin but a program - and on
+ * Termux it ships in debianutils, which dropped it in 5.x in favour of
+ * `command -v`. On an up-to-date Termux there is no `which`, so every probe
+ * failed and everything looked absent: adb, su, termux-wake-lock. install.sh
+ * never saw it because it uses the builtin.
+ */
+test("a binary is found by walking PATH, not by spawning which", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tca-path-"));
+  const isWin = process.platform === "win32";
+  const name = isWin ? "faketool.cmd" : "faketool";
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, isWin ? "@echo hi\r\n" : "#!/bin/sh\necho hi\n");
+  if (!isWin) fs.chmodSync(file, 0o755);
+
+  // A directory that happens to have the right name must not count as a hit.
+  fs.mkdirSync(path.join(dir, "decoy"));
+
+  const savedPath = process.env.PATH;
+  const savedExt = process.env.PATHEXT;
+  try {
+    // A PATH with no `which` and no `where` on it at all - which is the state an
+    // upgraded Termux is actually in.
+    process.env.PATH = dir;
+    if (isWin) process.env.PATHEXT = ".CMD;.EXE";
+
+    assert.equal(hasBinary("faketool"), true, "an executable on PATH must be found without which");
+    // Compared case-insensitively: on Windows the extension comes from PATHEXT,
+    // which is upper case, and the filesystem does not care. Termux does, and
+    // there the name is used exactly as given.
+    assert.equal(String(findBinary("faketool")).toLowerCase(), file.toLowerCase());
+    assert.equal(hasBinary("decoy"), false, "a directory is not a binary");
+    assert.equal(findBinary("nothing-of-this-name"), null);
+
+    // Same answer from the async door, since callers use both.
+    return hasBinaryAsync("faketool").then((found) => {
+      assert.equal(found, true, "the async version must agree");
+    });
+  } finally {
+    process.env.PATH = savedPath;
+    if (savedExt === undefined) delete process.env.PATHEXT;
+    else process.env.PATHEXT = savedExt;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("nothing probes for a binary by spawning a process any more", () => {
+  // The point is not just that findBinary exists: it is that no path through the
+  // module goes back to asking a program whether a program exists.
+  const src = fs.readFileSync(path.join(HERE, "..", "src", "privilege.js"), "utf8");
+  assert.doesNotMatch(src, /"which"/, "no calls to which");
+  assert.doesNotMatch(src, /"where"/, "no calls to where");
+  assert.doesNotMatch(src, /execFileSync/, "the sync spawn was only there for which");
+  assert.match(src, /export function findBinary/, "PATH walking should be the one implementation");
 });

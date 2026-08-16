@@ -26,7 +26,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 
 const DEFAULT_TIMEOUT = 12_000;
 
@@ -72,22 +72,74 @@ export function run(file, args, opts = {}) {
   });
 }
 
-/** Is this binary on PATH? Cheap enough to stay synchronous. */
-export function hasBinary(name) {
-  const which = process.platform === "win32" ? "where" : "which";
+/**
+ * Is this binary on PATH?
+ *
+ * Walks PATH directly instead of shelling out to `which`, and that is the whole
+ * point. `which` is not a shell builtin - it is a program, and on Termux it comes
+ * from debianutils, which dropped it in 5.x in favour of `command -v`. So on an
+ * up-to-date Termux `which` is simply gone, every call here failed, and the
+ * answer came back "not on PATH" for things sitting right there on PATH: adb, su,
+ * termux-wake-lock. The symptom was the agent insisting adb was not installed
+ * immediately after installing it.
+ *
+ * install.sh never saw this because it uses `command -v`, a builtin. That
+ * difference is exactly why this should not have been a subprocess in the first
+ * place: no dependency, no spawn, no timeout, and the same answer on every
+ * platform.
+ *
+ * @param {string} name
+ * @returns {string|null} the full path, or null
+ */
+export function findBinary(name) {
+  // A name with a separator is a path, not something to search for.
+  if (name.includes("/") || name.includes("\\")) {
+    return isExecutableFile(name) ? name : null;
+  }
+
+  const sep = process.platform === "win32" ? ";" : ":";
+  const dirs = (process.env.PATH || "").split(sep).filter(Boolean);
+  // Windows needs the extension tried; everywhere else the name is the name.
+  const exts =
+    process.platform === "win32" ? (process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean) : [""];
+
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const candidate = path.join(dir, name + ext);
+      if (isExecutableFile(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+/** A file that exists and can be run. Directories with the right name do not count. */
+function isExecutableFile(file) {
   try {
-    execFileSync(which, [name], { stdio: "ignore" });
+    if (!fs.statSync(file).isFile()) return false;
+  } catch {
+    return false;
+  }
+  // X_OK is meaningless on Windows; existing as a file is as much as it can say.
+  if (process.platform === "win32") return true;
+  try {
+    fs.accessSync(file, fs.constants.X_OK);
     return true;
   } catch {
     return false;
   }
 }
 
-/** Async version, used everywhere in this file so nothing blocks the daemon. */
+/** Is this binary on PATH? Cheap enough to stay synchronous. */
+export function hasBinary(name) {
+  return findBinary(name) !== null;
+}
+
+/**
+ * Kept async because every caller awaits it and changing them all buys nothing.
+ * It no longer spawns anything, so there is nothing left to block on.
+ */
 export async function hasBinaryAsync(name) {
-  const which = process.platform === "win32" ? "where" : "which";
-  const r = await run(which, [name], { timeout: 4000 });
-  return r.ok;
+  return findBinary(name) !== null;
 }
 
 // --------------------------------------------------------------------- root
