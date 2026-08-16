@@ -21,6 +21,24 @@ ok()   { echo -e "${GREEN}[ok]${RESET} $1"; }
 warn() { echo -e "${YELLOW}[!]${RESET}  $1"; }
 die()  { echo -e "${RED}[!!]${RESET} $1"; exit 1; }
 
+# When this script is piped into bash (curl ... | bash) stdin is the script
+# itself, not the keyboard. Read questions from the terminal directly, and
+# answer "no" if there is no terminal at all.
+ask() {
+  local reply=""
+  printf '%s' "$1"
+  if { read -r reply < /dev/tty; } 2>/dev/null; then
+    printf '\n'
+  else
+    reply=""
+    printf '(không có terminal - mặc định: không)\n'
+  fi
+  case "$(printf '%s' "$reply" | tr '[:upper:]' '[:lower:]')" in
+    y | yes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 echo -e "${BOLD}"
 echo "╔══════════════════════════════════════╗"
 echo "║   TCA - Termux Coding Agent Setup   ║"
@@ -34,11 +52,52 @@ fi
 
 # ── 1. Termux packages ───────────────────────────────────────────────────────
 step "Cập nhật Termux & cài packages cần thiết"
-pkg update -y
-pkg upgrade -y
-pkg install -y nodejs git
 
-ok "Node $(node --version) | git $(git --version | awk '{print $3}')"
+# apt hỏi "sources.list đã bị sửa, giữ bản nào?" và nếu stdin là pipe thì nó
+# nhận EOF rồi bỏ dở gói apt. --force-confold = luôn giữ file của bạn.
+export DEBIAN_FRONTEND=noninteractive
+KEEP_CONF=(-o "Dpkg::Options::=--force-confold" -o "Dpkg::Options::=--force-confdef")
+
+# Hoàn tất gói cài dở từ lần chạy trước (no-op nếu không có gì dở dang).
+dpkg --configure -a --force-confold >/dev/null 2>&1 || true
+
+apt-get update -y "${KEEP_CONF[@]}" || warn "apt update không xong, vẫn thử cài tiếp"
+# Nâng cấp là khuyến nghị của Termux (node được build với libc++ mới hơn), nhưng
+# một gói lẻ bị lỗi không được phép làm chết cả script.
+apt-get upgrade -y "${KEEP_CONF[@]}" || warn "apt upgrade không xong, vẫn thử cài tiếp"
+
+apt-get install -y "${KEEP_CONF[@]}" nodejs git \
+  || die "Không cài được nodejs/git.\n  Thử: pkg install nodejs git"
+
+command -v node >/dev/null || die "node vẫn không có sau khi cài. Chạy: pkg install nodejs"
+command -v git  >/dev/null || die "git vẫn không có sau khi cài. Chạy: pkg install git"
+
+# node có thể cài được nhưng không chạy: đó là lỗi libc++ của Termux, không phải
+# lỗi của dự án này. Phân biệt rõ để bạn không đi sửa sai chỗ.
+NODE_PROBE="$(node -p 'process.versions.node' 2>&1)" || NODE_BROKEN=1
+if [ -n "${NODE_BROKEN:-}" ]; then
+  echo -e "${RED}[!!]${RESET} node đã cài nhưng không chạy được:"
+  echo "     $NODE_PROBE"
+  case "$NODE_PROBE" in
+    *"CANNOT LINK EXECUTABLE"* | *"cannot locate symbol"*)
+      echo ""
+      echo "  Đây là lỗi lệch thư viện của Termux. Sửa bằng:"
+      echo "    pkg update && pkg upgrade -y"
+      echo "  Vẫn lỗi thì:"
+      echo "    pkg reinstall libc++ nodejs"
+      echo ""
+      echo "  Nếu vẫn lỗi: bản Termux trên Google Play đã bị bỏ và repo của nó hỏng."
+      echo "  Hãy cài Termux từ F-Droid hoặc GitHub releases."
+      ;;
+  esac
+  exit 1
+fi
+
+if [ "${NODE_PROBE%%.*}" -lt 20 ]; then
+  die "Cần Node 20+, đang có v$NODE_PROBE.\n  Chạy: pkg upgrade nodejs"
+fi
+
+ok "Node v$NODE_PROBE | git $(git --version | awk '{print $3}')"
 
 # ── 2. Clone hoặc pull repo ──────────────────────────────────────────────────
 TCA_DIR="$HOME/tca"
@@ -132,9 +191,13 @@ echo "    - Phantom process limit (ngăn Android kill shell commands của agent
 echo "    - Doze whitelist (agent không bị Android tắt khi khoá màn hình)"
 echo "    - Background activity + wake lock cho Termux"
 echo ""
-read -r -p "  Bạn có muốn setup ADB ngay bây giờ không? [y/N] " adb_choice
-if [[ "${adb_choice,,}" == "y" || "${adb_choice,,}" == "yes" ]]; then
-  tca adb-setup || warn "ADB setup chưa xong. Chạy lại sau bằng: tca adb-setup"
+if ask "  Bạn có muốn setup ADB ngay bây giờ không? [y/N] "; then
+  # adb-setup hỏi qua readline trên stdin, nên phải nối nó vào terminal thật.
+  if [ -r /dev/tty ]; then
+    tca adb-setup < /dev/tty || warn "ADB setup chưa xong. Chạy lại sau bằng: tca adb-setup"
+  else
+    warn "Không có terminal để chạy adb-setup. Chạy sau bằng: tca adb-setup"
+  fi
 else
   warn "Bỏ qua ADB setup. Có thể chạy sau bất kỳ lúc nào bằng: tca adb-setup"
 fi
