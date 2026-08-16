@@ -533,7 +533,13 @@ src/store.js         sessions as JSONL, parse cache, compaction checkpoints
 src/loop.js          the agent loop, sub-agents, cost accounting
 src/daemon.js        HTTP + SSE + auth + static files
 src/cli.js           serve / run / token / models / doctor / power / adb-setup
-src/web/             the UI: no framework, no build
+src/web/             the UI: no framework, zero build, modular ES modules
+  app.js             root wiring, event dispatching, and mode switches
+  helpers.js         DOM query/create helpers, i18n formatter, toasts
+  state.js           central reactive app state container
+  api.js             Bearer token management and SSE stream consumer
+  markdown.js        zero-dependency markdown block parser & token highlighter
+  components/        isolated components (chat, toolcard, approval, todopanel, sidebar, statusbar, settings, wizard)
 install.sh           the one-command install, non-interactive
 tools/gen-seed.mjs   regenerates the offline catalog
 tools/drop-i18n-keys.mjs      removes i18n keys by name, line-accurately
@@ -542,7 +548,7 @@ tools/check-fetch-source.sh   install.sh's libcurl repair and size report, again
 test/agent.test.mjs        end-to-end against a fake provider
 test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity, install.sh
 test/context.test.mjs      pairing, repair, compaction, the store and checkpoints
-test/markdown.test.mjs     the UI renderer and highlighter, in a DOM stub
+test/markdown.test.mjs     the UI renderer, highlighter and components, in a DOM stub
 test/search.test.mjs       ripgrep parity for grep and glob, the plan tool, AGENTS.md
 test/verify.test.mjs       diagnostics, and the tool set each mode and agent gets
 test/websearch.test.mjs    the search parser against a saved page, boot script
@@ -552,7 +558,7 @@ test/wire.test.mjs         what actually goes on the socket, for both formats
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 145 tests, no network or API key needed
+node --test test/*.test.mjs     # 154 tests, no network or API key needed
 npx tsc --noEmit                # JSDoc types, on a dev machine only
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```
@@ -567,10 +573,11 @@ thinking blocks replayed without their signature. Every one of those arrives in
 production as a bare 400 naming no cause. `context.test.mjs` asserts
 `tool_use`/`tool_result` pairing directly, on the shapes that used to break it.
 
-`markdown.test.mjs` loads `src/web/app.js` into a small DOM stub that has no
-`innerHTML` on it, so the renderer — including the syntax highlighter — is pinned
-down and cannot quietly grow an XSS hole. It also checks that every `id` app.js
-reaches for exists in `index.html`: nothing else catches that, because the stub
+`markdown.test.mjs` loads the modular web scripts under `src/web/` into a small
+DOM stub that has no `innerHTML` on it, so the renderer — including the syntax
+highlighter — is pinned down and cannot quietly grow an XSS hole. It also checks
+that every `id` and `t()` translation key requested across all web components
+exists in `index.html` and `i18n.js`: nothing else catches that, because the stub
 hands back an element for any id on purpose, and in a browser one missing id
 throws and takes the rest of the script with it.
 
@@ -579,3 +586,4 @@ which is the only thing that stops a bilingual UI from rotting.
 
 Types are JSDoc, checked with `tsc --noEmit` on a dev machine. There is no
 TypeScript build: the phone runs the source as-is.
+

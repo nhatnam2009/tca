@@ -90,10 +90,49 @@ class StubNode {
   }
 }
 
-/** Load app.js with just enough globals that its top-level wire() survives. */
+function getAllWebJsFiles(dir = path.join(SRC, "web")) {
+  let files = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...getAllWebJsFiles(full));
+    else if (entry.isFile() && entry.name.endsWith(".js")) files.push(full);
+  }
+  return files;
+}
+
+function readAllWebJs() {
+  return getAllWebJsFiles().map((f) => fs.readFileSync(f, "utf8")).join("\n");
+}
+
+function prepareScript(source) {
+  return source
+    .replace(/^import\s+[\s\S]*?from\s+["'][^"']+["'];?/gm, "")
+    .replace(/^import\s+["'][^"']+["'];?/gm, "")
+    .replace(/^export\s+(async\s+)?(const|let|var|function|class)\s+/gm, "$1$2 ")
+    .replace(/^export\s*\{[\s\S]*?\};?/gm, "")
+    .replace(/^export\s+default\s+/gm, "");
+}
+
+/** Load app.js and its modules with just enough globals that its top-level wire() survives. */
 function loadApp() {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const source = fs.readFileSync(path.join(here, "..", "src", "web", "app.js"), "utf8");
+  const webDir = path.join(here, "..", "src", "web");
+
+  const moduleFiles = [
+    "helpers.js",
+    "state.js",
+    "api.js",
+    "markdown.js",
+    "components/statusbar.js",
+    "components/sidebar.js",
+    "components/todopanel.js",
+    "components/toolcard.js",
+    "components/approval.js",
+    "components/chat.js",
+    "components/settings.js",
+    "components/wizard.js",
+    "app.js",
+  ];
 
   const byId = new Map();
   const document = {
@@ -173,7 +212,11 @@ function loadApp() {
   sandbox.globalThis = sandbox;
 
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox, { filename: "app.js" });
+  for (const rel of moduleFiles) {
+    const raw = fs.readFileSync(path.join(webDir, rel), "utf8");
+    const script = prepareScript(raw);
+    vm.runInContext(script, sandbox, { filename: rel });
+  }
   return sandbox;
 }
 
@@ -212,17 +255,13 @@ test("the DOM stub has no innerHTML, so the renderer cannot be using it", () => 
   const probe = new StubNode("div");
   assert.equal("innerHTML" in probe, false);
 
-  // Strip comments first: the file talks about innerHTML a lot on purpose.
-  const source = fs
-    .readFileSync(
-      path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "web", "app.js"),
-      "utf8",
-    )
+  // Strip comments first: the files talk about innerHTML a lot on purpose.
+  const source = readAllWebJs()
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|[^:])\/\/.*$/gm, "$1");
 
   for (const banned of ["innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval("]) {
-    assert.ok(!source.includes(banned), `app.js must not use ${banned}`);
+    assert.ok(!source.includes(banned), `web js must not use ${banned}`);
   }
 });
 
@@ -359,9 +398,8 @@ test("diff output is detected and coloured line by line", () => {
 
 test("every id app.js asks for exists in index.html", () => {
   // A typo in $("cfg-something") is silent until the moment you tap the control.
-  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "web");
-  const js = fs.readFileSync(path.join(dir, "app.js"), "utf8");
-  const html = fs.readFileSync(path.join(dir, "index.html"), "utf8");
+  const js = readAllWebJs();
+  const html = fs.readFileSync(path.join(SRC, "web", "index.html"), "utf8");
 
   const ids = new Set(Array.from(js.matchAll(/\$\("([a-zA-Z0-9_-]+)"\)/g), (m) => m[1]));
   assert.ok(ids.size > 40, `only found ${ids.size} ids, the pattern probably broke`);
@@ -389,7 +427,7 @@ test("every data-i18n key in index.html is defined in both languages", () => {
 test("every key app.js asks t() for is defined", () => {
   // The mirror of the test above: markup keys and code keys both have to exist,
   // or half the UI silently renders dotted key names.
-  const js = fs.readFileSync(path.join(SRC, "web", "app.js"), "utf8");
+  const js = readAllWebJs();
   const keys = new Set(Array.from(js.matchAll(/\bt\("([a-z][a-zA-Z0-9_.]+)"/g), (m) => m[1]));
   assert.ok(keys.size > 30, `only ${keys.size} t() calls found; the pattern probably broke`);
 
@@ -402,7 +440,7 @@ test("every key app.js asks t() for is defined", () => {
 test("no English UI text is left hardcoded where a key exists", () => {
   // Not a general lint - just the specific strings that used to be inline and
   // would silently stay English after a language switch.
-  const js = fs.readFileSync(path.join(SRC, "web", "app.js"), "utf8");
+  const js = readAllWebJs();
   const banned = [
     '"Working\\u2026"',
     '"Session deleted"',
@@ -419,7 +457,7 @@ test("no English UI text is left hardcoded where a key exists", () => {
     '"Not running under Termux',
   ];
   for (const s of banned) {
-    assert.ok(!js.includes(s), `app.js still hardcodes ${s}; it should call t()`);
+    assert.ok(!js.includes(s), `web js still hardcodes ${s}; it should call t()`);
   }
 });
 
@@ -477,7 +515,7 @@ test("the tabs are declared once and switchTab is not hardcoded", () => {
   // third tab was impossible without rewriting it. It stays table-driven even now
   // that there are two again, because that is what made removing one a one-line
   // change instead of a rewrite.
-  const js = fs.readFileSync(path.join(SRC, "web", "app.js"), "utf8");
+  const js = readAllWebJs();
   assert.match(js, /const TABS = \[/, "tabs should come from a table");
   for (const name of ["chat", "settings"]) {
     assert.ok(js.includes(`name: "${name}"`), `TABS is missing ${name}`);
@@ -489,7 +527,7 @@ test("the tabs are declared once and switchTab is not hardcoded", () => {
   // left pointing at it, in either direction.
   for (const dead of ["tab-power", "panel-power", "power-body", "btn-recheck-power"]) {
     assert.ok(!html.includes(`id="${dead}"`), `index.html still has #${dead}`);
-    assert.ok(!js.includes(dead), `app.js still references ${dead}`);
+    assert.ok(!js.includes(dead), `web js still references ${dead}`);
   }
 
   // aria-controls must point at something that exists, or the tablist lies to
@@ -503,16 +541,14 @@ test("no translation is defined that nothing uses", () => {
   // The other direction of rot: keys outlive the code that referenced them, the
   // table grows, and nobody dares delete anything.
   const sources = [
-    "web/app.js",
-    "web/index.html",
-    "capabilities.js",
-    "privilege.js",
-    "status.js",
-    "cli.js",
-    "daemon.js",
-  ]
-    .map((f) => fs.readFileSync(path.join(SRC, f), "utf8"))
-    .join("\n");
+    readAllWebJs(),
+    fs.readFileSync(path.join(SRC, "web", "index.html"), "utf8"),
+    fs.readFileSync(path.join(SRC, "capabilities.js"), "utf8"),
+    fs.readFileSync(path.join(SRC, "privilege.js"), "utf8"),
+    fs.readFileSync(path.join(SRC, "status.js"), "utf8"),
+    fs.readFileSync(path.join(SRC, "cli.js"), "utf8"),
+    fs.readFileSync(path.join(SRC, "daemon.js"), "utf8"),
+  ].join("\n");
 
   // Some keys are assembled at runtime - `cap.${id}.title`, `tier.${tier}`,
   // `priv.${kind}.label` - so a plain text search cannot see them. Rebuild that
@@ -544,11 +580,11 @@ test("the dead Android-status markup and CSS are gone with it", () => {
   // grouped by benefit. Leaving the old fieldset behind would mean two places
   // rendering the same data.
   const html = fs.readFileSync(path.join(SRC, "web", "index.html"), "utf8");
-  const js = fs.readFileSync(path.join(SRC, "web", "app.js"), "utf8");
+  const js = readAllWebJs();
   const css = fs.readFileSync(path.join(SRC, "web", "style.css"), "utf8");
   for (const dead of ["status-list", "btn-recheck-status", "loadAndroidStatus", "renderAndroidStatus"]) {
     assert.ok(!html.includes(dead), `index.html still has ${dead}`);
-    assert.ok(!js.includes(dead), `app.js still has ${dead}`);
+    assert.ok(!js.includes(dead), `web js still has ${dead}`);
   }
   for (const rule of [".status-row", ".status-dot", ".status-label", ".status-fix"]) {
     assert.ok(!css.includes(rule), `style.css still has dead rule ${rule}`);
@@ -647,13 +683,10 @@ test("every element app.js reaches for exists in index.html", () => {
   // which in a browser kills the whole script - including the parts that do work.
   // Nothing else catches this: the DOM stub above hands back an element for any
   // id, on purpose, so the renderer tests do not need markup.
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const read = (p) => fs.readFileSync(path.join(here, "..", p), "utf8");
-
   const asked = new Set();
-  for (const m of read("src/web/app.js").matchAll(/\$\("([a-z0-9-]+)"\)/g)) asked.add(m[1]);
+  for (const m of readAllWebJs().matchAll(/\$\("([a-z0-9-]+)"\)/g)) asked.add(m[1]);
   const present = new Set();
-  for (const m of read("src/web/index.html").matchAll(/id="([a-z0-9-]+)"/g)) present.add(m[1]);
+  for (const m of fs.readFileSync(path.join(SRC, "web", "index.html"), "utf8").matchAll(/id="([a-z0-9-]+)"/g)) present.add(m[1]);
 
   assert.ok(asked.size > 40, `only found ${asked.size} lookups; the pattern probably broke`);
   const missing = [...asked].filter((id) => !present.has(id)).sort();

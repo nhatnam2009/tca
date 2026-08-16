@@ -139,14 +139,15 @@ export async function serve(opts = {}) {
       return res.end(body);
     }
     if (method === "GET" && pathname.startsWith("/assets/")) {
-      const name = path.basename(pathname);
-      // Allowlist by extension. Serving anything that happens to sit in src/web
-      // is how a leftover style.css.bak ended up publicly readable.
-      if (!Object.prototype.hasOwnProperty.call(MIME, path.extname(name))) {
+      const rel = pathname.slice("/assets/".length);
+      const file = path.resolve(WEB_DIR, rel);
+      if (!file.startsWith(WEB_DIR + path.sep) && file !== WEB_DIR) {
+        return json(res, 403, { error: "forbidden" });
+      }
+      if (!Object.prototype.hasOwnProperty.call(MIME, path.extname(file))) {
         return json(res, 404, { error: "not found" });
       }
-      const file = path.join(WEB_DIR, name);
-      if (!fs.existsSync(file)) return json(res, 404, { error: "not found" });
+      if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) return json(res, 404, { error: "not found" });
       return sendFile(res, file);
     }
 
