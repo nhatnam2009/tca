@@ -400,6 +400,80 @@ fi
 ok "node v$NODE_V"
 info "không cần npm install — dự án này không có dependency nào"
 
+#
+# Lấy source về. git nếu được, không thì tarball qua curl.
+#
+# Trước đây chỗ này là:
+#
+#   git clone ... >/dev/null 2>&1 || die "Clone thất bại. Kiểm tra mạng."
+#
+# và nó sai theo hai cách. Một: nó ném đi thông báo lỗi thật của git rồi thay
+# bằng một phỏng đoán — và phỏng đoán đó gần như luôn sai, vì nếu mạng chết thì
+# curl đã không tải nổi chính script này. Hai: nó bỏ cuộc trong khi vẫn còn một
+# đường đi rõ ràng. git chỉ cần cho việc cập nhật sau này, không cần cho lần cài
+# đầu tiên: GitHub có tarball, và curl thì ta biết chắc là đang chạy được.
+fetch_source() {
+  local repo="$1" dest="$2" out tarurl tmp
+
+  if command -v git >/dev/null 2>&1; then
+    info "đang clone $repo…"
+    if out="$(git clone --depth 1 "$repo" "$dest" 2>&1)"; then
+      ok "đã clone vào $dest"
+      return 0
+    fi
+    warn "git clone thất bại:"
+    printf '%s\n' "$out" | tail -4 | sed 's/^/      /' >&2
+    # Phân loại, vì bốn nguyên nhân này cần bốn cách xử lý hoàn toàn khác nhau.
+    case "$out" in
+      *"CANNOT LINK EXECUTABLE"* | *"cannot locate symbol"*)
+        warn "git bị lệch thư viện. Sửa sau bằng: pkg reinstall git" ;;
+      *certificate* | *SSL* | *TLS*)
+        warn "lỗi chứng chỉ. Sửa sau bằng: pkg install ca-certificates" ;;
+      *"already exists"*)
+        warn "$dest đã tồn tại và không rỗng. Đổi tên hoặc xoá nó rồi chạy lại." ;;
+      *"could not resolve"* | *"Could not resolve"* | *"unable to access"*)
+        warn "không ra được mạng từ git (curl thì được — có thể do proxy)." ;;
+    esac
+    info "thử tải tarball thay thế…"
+  else
+    info "không có git, tải tarball…"
+  fi
+
+  # github.com/user/repo.git -> .../archive/refs/heads/main.tar.gz
+  tarurl="${repo%.git}"
+  tarurl="${tarurl%/}/archive/refs/heads/main.tar.gz"
+  tmp="${TMPDIR:-/tmp}/tca-src.$$"
+  mkdir -p "$tmp" || die "không tạo được thư mục tạm"
+
+  if ! curl -fsSL --retry 2 --connect-timeout 30 -o "$tmp/src.tar.gz" "$tarurl" 2>"$tmp/curl.err"; then
+    warn "tải tarball cũng thất bại:"
+    tail -3 "$tmp/curl.err" 2>/dev/null | sed 's/^/      /' >&2
+    rm -rf "$tmp"
+    die "Không lấy được source. Kiểm tra mạng, rồi thử lại."
+  fi
+  if ! tar -xzf "$tmp/src.tar.gz" -C "$tmp" 2>/dev/null; then
+    rm -rf "$tmp"
+    die "Tarball tải về nhưng giải nén lỗi."
+  fi
+
+  # Tarball của GitHub bọc mọi thứ trong <repo>-<branch>/.
+  local inner
+  inner="$(find "$tmp" -maxdepth 2 -name cli.js -path '*/src/*' -print -quit 2>/dev/null)"
+  [ -n "$inner" ] || inner="$(find "$tmp" -maxdepth 3 -name cli.js -path '*/src/*' -print -quit 2>/dev/null)"
+  if [ -z "$inner" ]; then
+    rm -rf "$tmp"
+    die "Tarball không có src/cli.js — repo hoặc nhánh sai?"
+  fi
+  inner="$(dirname "$(dirname "$inner")")"
+
+  mkdir -p "$dest" || die "không tạo được $dest"
+  # cp -R chứ không mv: $dest có thể đã tồn tại và có thứ trong đó.
+  cp -R "$inner"/. "$dest"/ || { rm -rf "$tmp"; die "không sao chép được source vào $dest"; }
+  rm -rf "$tmp"
+  ok "đã tải source vào $dest (tarball, không có git history)"
+  warn "không có .git nên 'tca update' sẽ không dùng được — cài git rồi clone lại nếu cần."
+}
+
 # ─── 3. Source code ──────────────────────────────────────────────────────────
 
 step "Source code"
@@ -421,14 +495,16 @@ else
   TCA_DIR="$HOME/tca"
   if [ -d "$TCA_DIR/.git" ]; then
     info "đang cập nhật $TCA_DIR…"
-    git -C "$TCA_DIR" pull --ff-only >/dev/null 2>&1 && ok "đã cập nhật" || warn "pull không xong, dùng bản đang có"
+    if pull_out="$(git -C "$TCA_DIR" pull --ff-only 2>&1)"; then
+      ok "đã cập nhật"
+    else
+      warn "pull không xong, dùng bản đang có:"
+      printf '%s\n' "$pull_out" | tail -3 | sed 's/^/      /' >&2
+    fi
   elif [ -f "$TCA_DIR/src/cli.js" ]; then
     ok "đã có sẵn tại $TCA_DIR"
   else
-    command -v git >/dev/null || die "Cần git để tải source. Chạy: pkg install git"
-    info "đang clone $TCA_REPO…"
-    git clone --depth 1 "$TCA_REPO" "$TCA_DIR" >/dev/null 2>&1 || die "Clone thất bại. Kiểm tra mạng."
-    ok "đã clone vào $TCA_DIR"
+    fetch_source "$TCA_REPO" "$TCA_DIR"
   fi
 fi
 cd "$TCA_DIR"

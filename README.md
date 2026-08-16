@@ -63,6 +63,13 @@ That matters more than it sounds: the whole promise here is one command and then
 `nhatnam`. An installer that can only report "apt is broken, go fix it yourself"
 has already broken that promise.
 
+For the same reason `git` is not on the critical path. If `git clone` fails - a
+library mismatch on a freshly installed git, a missing CA bundle, a directory
+already in the way - the installer prints git's actual error, says which of those
+it looks like, and then falls back to fetching the tarball with curl, which is
+demonstrably working because it is how the script itself arrived. git is only
+needed to *update* later, not to install.
+
 It installs the packages, clones into `~/tca`, creates the `tca` and `nhatnam`
 commands, asks Android for storage permission, sets up a service so the daemon
 survives being killed, and stops. It asks no questions: everything interactive
