@@ -183,6 +183,61 @@ export function rishReady() {
   return files.script && files.dex;
 }
 
+// ------------------------------------------------------------ start on boot
+
+/**
+ * Termux:Boot runs every executable file in ~/.termux/boot/ when the device
+ * starts. It is a separate APK from F-Droid, which we cannot install and cannot
+ * detect from inside Termux - so the honest split is: we write the script, and
+ * the Power tab tells the user to install the app that runs it.
+ *
+ * Without this, Android has no boot service for an unprivileged app at all: the
+ * runit service only comes up once you open Termux, because runit itself starts
+ * from ~/.bashrc.
+ */
+export function bootScriptPath() {
+  const home = process.env.HOME || os.homedir();
+  return path.join(home, ".termux", "boot", "start-tca");
+}
+
+export function bootScriptPresent() {
+  return fs.existsSync(bootScriptPath());
+}
+
+/**
+ * Write the boot script. Idempotent: rewriting it is how you point it at a moved
+ * checkout.
+ * @param {string} cliPath  absolute path to src/cli.js
+ */
+export function installBootScript(cliPath) {
+  const file = bootScriptPath();
+  const shell = process.env.PREFIX ? `${process.env.PREFIX}/bin/sh` : "/bin/sh";
+  const body = [
+    `#!${shell}`,
+    "# Written by tca. Run at device boot by the Termux:Boot app.",
+    "# Rewrite it from the Power tab, or delete it to stop starting on boot.",
+    "termux-wake-lock 2>/dev/null || true",
+    `cd ${JSON.stringify(path.dirname(path.dirname(cliPath)))}`,
+    `exec node ${JSON.stringify(cliPath)} serve`,
+    "",
+  ].join("\n");
+
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, body);
+  try {
+    fs.chmodSync(file, 0o700);
+  } catch {
+    // Termux:Boot only runs executable files, so this failing is worth knowing
+    // about - but it is reported through the capability check, not thrown here.
+  }
+  return { ok: bootScriptPresent(), path: file };
+}
+
+export function removeBootScript() {
+  fs.rmSync(bootScriptPath(), { force: true });
+  return { ok: !bootScriptPresent() };
+}
+
 /**
  * How to hand a command to rish. Not documented anywhere official, and it has
  * changed between Shizuku versions, so both known shapes are tried once and the

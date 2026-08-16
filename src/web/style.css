@@ -1456,6 +1456,19 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
 .power-done-list li.unknown .mark {
   color: var(--muted);
 }
+/* A caveat on a line that otherwise reads as fully verified. */
+.power-caveat {
+  display: block;
+  margin-top: 2px;
+  color: var(--warn);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+.power-undo {
+  padding: 0;
+  min-height: 28px;
+  font-size: 0.76rem;
+}
 .power-ok-note {
   margin: 0;
   color: var(--ok);

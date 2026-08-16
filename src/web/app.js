@@ -2132,6 +2132,19 @@ function capabilityGroup(group) {
       li.className = item.ok === true ? "ok" : "unknown";
       li.append(markGlyph(mark, state));
       li.appendChild(document.createTextNode(item.detail ? `${item.title} \u2014 ${item.detail}` : item.title));
+      // Half of "start on boot" is an app we cannot see from inside Termux, so a
+      // tick here would be overstating what was actually verified. It is also the
+      // one folded item worth being able to switch back off from here.
+      if (item.id === "boot" && item.ok === true) {
+        li.appendChild(el("span", "power-caveat", t("boot.appNote")));
+        li.appendChild(
+          privAction(t("boot.remove"), "btn link power-undo", async () => {
+            await api("/api/privilege/boot-script", { method: "POST", body: { remove: true } });
+            toast(t("boot.removed"));
+            await loadPower();
+          }),
+        );
+      }
       list.appendChild(li);
     }
     done.appendChild(list);
@@ -2162,7 +2175,19 @@ function capabilityCard(item) {
   if (meta) card.appendChild(el("p", "power-item-meta muted small", meta));
 
   if (!item.installable) {
-    // `privilege` has its own section below; the rest are instructions.
+    // `privilege` has its own section below; `boot` writes a file rather than
+    // installing a package; the rest are instructions to follow by hand.
+    if (item.id === "boot") {
+      card.appendChild(el("p", "power-item-fix small", item.fix));
+      card.appendChild(
+        privAction(t("boot.install"), "btn primary block", async () => {
+          await api("/api/privilege/boot-script", { method: "POST", body: {} });
+          toast(t("boot.installed"));
+          await loadPower();
+        }),
+      );
+      return card;
+    }
     if (item.id !== "privilege") card.appendChild(el("p", "power-item-fix small", item.fix));
     return card;
   }

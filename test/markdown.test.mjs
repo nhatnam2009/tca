@@ -557,6 +557,7 @@ test("every class the Power panel builds has a rule in the stylesheet", () => {
     "priv-step-count", "priv-step-title", "priv-field", "priv-applied", "priv-applied-list",
     "todo", "todo-head", "todo-title", "todo-count", "todo-bar", "todo-bar-fill",
     "todo-list", "todo-item", "todo-mark", "todo-text",
+    "power-caveat", "power-undo",
   ];
   const missing = classes.filter((c) => !css.includes(`.${c}`));
   assert.deepEqual(missing, [], `style.css has no rule for: ${missing.join(", ")}`);

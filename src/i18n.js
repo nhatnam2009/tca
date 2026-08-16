@@ -93,6 +93,17 @@ export const DICT = {
     "cap.service.why": "Có termux-services thì daemon sống lại khi Android kill Termux.",
     "cap.service.fix": "Chạy: pkg install termux-services",
 
+    "cap.boot.title": "Tự chạy sau khi khởi động máy",
+    "cap.boot.why":
+      "Android không cho app thường có service lúc boot, nên sau khi khởi động lại bạn phải mở Termux mới có agent. App Termux:Boot giải quyết việc đó.",
+    "cap.boot.fix": "Cài app Termux:Boot từ F-Droid, rồi bấm nút bên dưới để tạo script khởi động.",
+
+    "boot.install": "Tạo script khởi động",
+    "boot.installed": "Đã tạo. Cài app Termux:Boot từ F-Droid là xong.",
+    "boot.remove": "Bỏ tự chạy khi khởi động",
+    "boot.removed": "Đã bỏ script khởi động.",
+    "boot.appNote": "Script đã có. Nó chỉ chạy nếu app Termux:Boot được cài — Termux không kiểm tra được điều đó từ bên trong.",
+
     "cap.python.title": "Chạy được code Python",
     "cap.python.why": "Không có Python thì agent viết được file .py nhưng không chạy thử được.",
     "cap.python.fix": "Chạy: pkg install python",
@@ -457,6 +468,17 @@ export const DICT = {
     "cap.service.title": "Restart automatically when killed",
     "cap.service.why": "With termux-services the daemon comes back when Android kills Termux.",
     "cap.service.fix": "Run: pkg install termux-services",
+
+    "cap.boot.title": "Start when the phone starts",
+    "cap.boot.why":
+      "Android gives an ordinary app no boot service, so after a restart you have to open Termux before the agent exists. The Termux:Boot app fixes that.",
+    "cap.boot.fix": "Install Termux:Boot from F-Droid, then press the button below to write the startup script.",
+
+    "boot.install": "Write the startup script",
+    "boot.installed": "Written. Install the Termux:Boot app from F-Droid and it is done.",
+    "boot.remove": "Stop starting on boot",
+    "boot.removed": "Startup script removed.",
+    "boot.appNote": "The script is in place. It only runs if the Termux:Boot app is installed, which Termux cannot check from the inside.",
 
     "cap.python.title": "Run Python code",
     "cap.python.why": "Without Python the agent can write .py files but never test them.",

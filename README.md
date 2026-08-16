@@ -216,11 +216,12 @@ typed digit by digit.
 
 ## Tools
 
-Fourteen, all confined to the workspace:
+Fifteen. The file tools are confined to the workspace; two reach the network.
 
 ```
 read_file  batch_read  write_file  edit_file  patch_file  move_file  delete_file
-list_dir   tree        glob        grep       run_command read_url    todo_write
+list_dir   tree        glob        grep       run_command todo_write
+read_url   web_search
 ```
 
 `edit_file` replaces one exact string and refuses an ambiguous match.
@@ -247,6 +248,14 @@ If the workspace contains an `AGENTS.md`, it is read on every turn and appended 
 the system prompt. That is the cheapest way to teach the agent "this project uses
 pnpm" or "never touch generated/".
 
+`web_search` closes a real ceiling: the agent could fetch a URL but had no way to
+find one, so it could not look up an API it did not already know. It goes through
+DuckDuckGo's HTML page, which needs no API key and no account. That is scraping,
+and it is honest about it: every selector is a named constant in `src/websearch.js`,
+the tests pin the page shape against a saved fixture, and an unreadable page
+reports "the HTML has probably changed" rather than "no results" - because those
+need completely different responses from a human.
+
 ## Layout
 
 ```
@@ -260,6 +269,7 @@ src/provider.js      the two wire formats, SSE streaming, retries
 src/tools.js         14 tools + workspace confinement + denylist + diff engine
 src/fastsearch.js    ripgrep/fd fast path, kept answer-for-answer with the walk
 src/notify.js        termux-notification, so a blocked turn is not invisible
+src/websearch.js     DuckDuckGo HTML search, selectors in one editable table
 src/privilege.js     root / Shizuku / adb backends, and the Android unlocks
 src/capabilities.js  what the agent could do here, scored and tiered
 src/status.js        the `doctor` view of capabilities.js
@@ -274,12 +284,13 @@ test/agent.test.mjs        end-to-end against a fake provider
 test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity
 test/markdown.test.mjs     the UI renderer and the Power panel, in a DOM stub
 test/search.test.mjs       ripgrep/fd parity, the plan tool, AGENTS.md
+test/websearch.test.mjs    the search parser against a saved page, boot script
 ```
 
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 79 tests, no network or API key needed
+node --test test/*.test.mjs     # 89 tests, no network or API key needed
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```
 

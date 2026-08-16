@@ -29,8 +29,10 @@ import {
   detectBackend,
   hasBinary,
   installAdb,
+  installBootScript,
   invalidateBackendCache,
   readPhantomLimit,
+  removeBootScript,
   run as runProcess,
 } from "./privilege.js";
 import { DICT, LANGS, DEFAULT_LANG } from "./i18n.js";
@@ -268,6 +270,16 @@ export async function serve(opts = {}) {
       const applied = await applyUnlocks();
       if (!applied.kind) return json(res, 400, { ok: false, errKey: "priv.err.no_backend" });
       return json(res, 200, { ok: applied.ok, kind: applied.kind, applied: applied.applied });
+    }
+
+    // Start on boot. We write the script; the app that runs it is a separate APK
+    // we can neither install nor see, so the UI says so rather than pretending.
+    if (method === "POST" && pathname === "/api/privilege/boot-script") {
+      if (!process.env.TERMUX_VERSION) return json(res, 400, { error: "Termux only" });
+      const body = await readJson(req);
+      if (body.remove) return json(res, 200, removeBootScript());
+      const cli = fileURLToPath(new URL("./cli.js", import.meta.url));
+      return json(res, 200, installBootScript(cli));
     }
 
     // ---- providers & catalog ----------------------------------------------

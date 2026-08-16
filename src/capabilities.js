@@ -21,7 +21,7 @@ import path from "node:path";
 import { loadConfig, SHARED_DIR } from "./config.js";
 import { pickShell } from "./tools.js";
 import { detectFromEnv } from "./providers.js";
-import { detectBackend, hasBinaryAsync, readPhantomLimit } from "./privilege.js";
+import { bootScriptPath, bootScriptPresent, detectBackend, hasBinaryAsync, readPhantomLimit } from "./privilege.js";
 import { t, pickLang } from "./i18n.js";
 
 /**
@@ -70,6 +70,7 @@ export const CAPABILITIES = [
   },
   { id: "privilege", tier: "recommended", weight: 4, termuxOnly: true },
   { id: "service", tier: "recommended", weight: 1, termuxOnly: true, bin: "sv", packages: ["termux-services"], sizeMb: 1 },
+  { id: "boot", tier: "recommended", weight: 2, termuxOnly: true },
   { id: "jq", tier: "recommended", weight: 1, bin: "jq", packages: ["jq"], sizeMb: 1 },
 
   // ----------------------------------------------------------- advanced
@@ -130,6 +131,13 @@ function specialChecks({ config, termux, lang }) {
     privilege: async () => {
       const backend = await detectBackend();
       return { ok: backend.kind !== null, detail: backend.kind || "" };
+    },
+    boot: async () => {
+      if (!termux) return { ok: null };
+      // Only half of this is checkable: the script is ours, the app that runs it
+      // is not visible from inside Termux. So "installed" means the script is in
+      // place, and the fix text is what tells the user about the app.
+      return { ok: bootScriptPresent(), detail: bootScriptPresent() ? bootScriptPath() : "" };
     },
   };
 }

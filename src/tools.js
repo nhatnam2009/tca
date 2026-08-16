@@ -14,6 +14,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fdGlob, rgSearch } from "./fastsearch.js";
 import { writeTodos } from "./store.js";
+import { search as webSearch } from "./websearch.js";
 
 const MAX_OUTPUT = 60_000; // chars fed back to the model
 const MAX_FILE = 400_000;
@@ -730,6 +731,34 @@ export const TOOLS = {
       const summary = changeSummary(original, text);
       const head = `Applied ${applied} hunk(s) to ${p}${note}`;
       return summary ? `${head}\n${summary}` : head;
+    },
+  },
+
+  web_search: {
+    spec: {
+      name: "web_search",
+      description:
+        "Search the web and get back titles, URLs and snippets. Use it when you need something you do not know: a library's current API, an error message, a version-specific behaviour. Follow up with read_url on the most promising result - the snippets alone are rarely enough to write code from.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          limit: { type: "integer", description: "How many results, default 8, max 15." },
+        },
+        required: ["query"],
+      },
+    },
+    async run({ query, limit = 8 }, ctx) {
+      if (typeof query !== "string" || !query.trim()) throw new ToolError("query is required");
+      const n = Math.min(Math.max(Number(limit) || 8, 1), 15);
+      const res = await webSearch({ query, limit: n, signal: ctx.signal });
+      if (!res.ok) throw new ToolError(/** @type {{reason: string}} */ (res).reason);
+      if (!res.results.length) return `no results for ${query}`;
+      return clip(
+        res.results
+          .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${r.snippet ? `\n   ${r.snippet}` : ""}`)
+          .join("\n\n"),
+      );
     },
   },
 
