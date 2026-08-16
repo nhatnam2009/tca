@@ -131,6 +131,13 @@ export function fillSettings(cfg, provId, lang) {
   if ($("cfg-budget-cost")) $("cfg-budget-cost").value = budget.maxCostPerSession || "";
   if ($("cfg-budget-tokens")) $("cfg-budget-tokens").value = budget.maxTokensPerSession || "";
   if ($("cfg-budget-warn")) $("cfg-budget-warn").value = budget.warnAtPercent ?? 80;
+  const perms = cfg.permissions || {};
+  if ($("perm-bash")) $("perm-bash").value = perms.bash || "ask";
+  if ($("perm-git")) $("perm-git").value = perms.git || "allow";
+  if ($("perm-file-write")) $("perm-file-write").value = perms.file_write || "allow";
+  if ($("perm-file-read")) $("perm-file-read").value = perms.file_read || "allow";
+  if ($("perm-web-search")) $("perm-web-search").value = perms.web_search || "allow";
+  if ($("perm-subagent")) $("perm-subagent").value = perms.subagent || "ask";
   fillProvider(cfg, provId);
 }
 
@@ -380,6 +387,13 @@ export function readSettings(cfg, provId) {
   if ($("cfg-budget-cost")) cfg.budget.maxCostPerSession = Math.max(0, Number($("cfg-budget-cost").value) || 0);
   if ($("cfg-budget-tokens")) cfg.budget.maxTokensPerSession = Math.max(0, Number($("cfg-budget-tokens").value) || 0);
   if ($("cfg-budget-warn")) cfg.budget.warnAtPercent = Math.max(1, Math.min(100, Number($("cfg-budget-warn").value) || 80));
+  if (!cfg.permissions) cfg.permissions = {};
+  if ($("perm-bash")) cfg.permissions.bash = $("perm-bash").value;
+  if ($("perm-git")) cfg.permissions.git = $("perm-git").value;
+  if ($("perm-file-write")) cfg.permissions.file_write = $("perm-file-write").value;
+  if ($("perm-file-read")) cfg.permissions.file_read = $("perm-file-read").value;
+  if ($("perm-web-search")) cfg.permissions.web_search = $("perm-web-search").value;
+  if ($("perm-subagent")) cfg.permissions.subagent = $("perm-subagent").value;
 }
 
 export function render(state) {

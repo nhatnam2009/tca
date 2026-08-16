@@ -106,6 +106,14 @@ export function defaultConfig() {
       maxTokensPerSession: 0,
       warnAtPercent: 80,
     },
+    permissions: {
+      bash: "ask",
+      file_write: "allow",
+      file_read: "allow",
+      web_search: "allow",
+      subagent: "allow",
+      git: "allow",
+    },
     providers: {},
   };
 }
@@ -138,6 +146,21 @@ export function loadConfig() {
   }
   const merged = { ...defaultConfig(), ...raw };
   merged.budget = { ...defaultConfig().budget, ...(raw.budget || {}) };
+
+  const defaultPerms = defaultConfig().permissions;
+  const rawPerms = raw.permissions || {};
+  const mergedPerms = { ...defaultPerms, ...rawPerms };
+  if (raw.permissions === undefined) {
+    if (raw.autoApproveCommands !== undefined) {
+      mergedPerms.bash = raw.autoApproveCommands ? "allow" : "ask";
+      mergedPerms.git = raw.autoApproveCommands ? "allow" : "ask";
+    }
+    if (raw.autoApproveEdits !== undefined) {
+      mergedPerms.file_write = raw.autoApproveEdits ? "allow" : "ask";
+    }
+  }
+  merged.permissions = mergedPerms;
+
   merged.providers = { ...defaultConfig().providers, ...(raw.providers || {}) };
 
   /** @type {Config} */

@@ -772,6 +772,52 @@
             </p>
           </fieldset>
 
+          <fieldset>
+            <legend data-i18n="settings.perm.legend">Tool permissions</legend>
+
+            <label for="perm-bash" data-i18n="settings.perm.bash">Shell commands (bash)</label>
+            <select id="perm-bash">
+              <option value="allow" data-i18n="settings.perm.allow">Always allow</option>
+              <option value="ask" data-i18n="settings.perm.ask">Ask before running</option>
+              <option value="deny" data-i18n="settings.perm.deny">Block / Deny</option>
+            </select>
+
+            <label for="perm-git" data-i18n="settings.perm.git">Git operations</label>
+            <select id="perm-git">
+              <option value="allow" data-i18n="settings.perm.allow">Always allow</option>
+              <option value="ask" data-i18n="settings.perm.ask">Ask before running</option>
+              <option value="deny" data-i18n="settings.perm.deny">Block / Deny</option>
+            </select>
+
+            <label for="perm-file-write" data-i18n="settings.perm.fileWrite">File changes (write / edit / delete)</label>
+            <select id="perm-file-write">
+              <option value="allow" data-i18n="settings.perm.allow">Always allow</option>
+              <option value="ask" data-i18n="settings.perm.ask">Ask before running</option>
+              <option value="deny" data-i18n="settings.perm.deny">Block / Deny</option>
+            </select>
+
+            <label for="perm-file-read" data-i18n="settings.perm.fileRead">File reading (read / grep / glob)</label>
+            <select id="perm-file-read">
+              <option value="allow" data-i18n="settings.perm.allow">Always allow</option>
+              <option value="ask" data-i18n="settings.perm.ask">Ask before running</option>
+              <option value="deny" data-i18n="settings.perm.deny">Block / Deny</option>
+            </select>
+
+            <label for="perm-web-search" data-i18n="settings.perm.webSearch">Web search & fetch URL</label>
+            <select id="perm-web-search">
+              <option value="allow" data-i18n="settings.perm.allow">Always allow</option>
+              <option value="ask" data-i18n="settings.perm.ask">Ask before running</option>
+              <option value="deny" data-i18n="settings.perm.deny">Block / Deny</option>
+            </select>
+
+            <label for="perm-subagent" data-i18n="settings.perm.subagent">Sub-agent delegation</label>
+            <select id="perm-subagent">
+              <option value="allow" data-i18n="settings.perm.allow">Always allow</option>
+              <option value="ask" data-i18n="settings.perm.ask">Ask before running</option>
+              <option value="deny" data-i18n="settings.perm.deny">Block / Deny</option>
+            </select>
+          </fieldset>
+
           <div class="row sticky-actions">
             <button id="btn-save-config" class="btn primary grow" type="submit" data-i18n="settings.save">
               Save settings

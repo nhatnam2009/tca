@@ -368,6 +368,17 @@ export const DICT = {
     "settings.budget.warnLabel": "Cảnh báo khi đạt mức (%)",
     "settings.budget.warnHint": "Hiện cảnh báo khi mức tiêu thụ đạt phần trăm này.",
 
+    "settings.perm.legend": "Quyền chi tiết theo tool",
+    "settings.perm.bash": "Lệnh shell (bash)",
+    "settings.perm.git": "Thao tác Git",
+    "settings.perm.fileWrite": "Sửa file (ghi / sửa / xoá)",
+    "settings.perm.fileRead": "Đọc file (đọc / tìm kiếm)",
+    "settings.perm.webSearch": "Tìm kiếm web & tải URL",
+    "settings.perm.subagent": "Uỷ quyền agent con",
+    "settings.perm.allow": "Luôn cho phép",
+    "settings.perm.ask": "Hỏi trước",
+    "settings.perm.deny": "Chặn",
+
     // ------------------------------------------------------- thông báo ngắn
     "ui.stopping": "Đang dừng…",
     "ui.searching": "Đang tìm…",
@@ -781,6 +792,17 @@ export const DICT = {
     "settings.budget.tokensHint": "0 = unlimited. Stops the agent turn if token count reaches this limit.",
     "settings.budget.warnLabel": "Warn at threshold (%)",
     "settings.budget.warnHint": "Warns once when consumption reaches this percentage of the configured limit.",
+
+    "settings.perm.legend": "Tool permissions",
+    "settings.perm.bash": "Shell commands (bash)",
+    "settings.perm.git": "Git operations",
+    "settings.perm.fileWrite": "File changes (write / edit / delete)",
+    "settings.perm.fileRead": "File reading (read / grep / glob)",
+    "settings.perm.webSearch": "Web search & fetch URL",
+    "settings.perm.subagent": "Sub-agent delegation",
+    "settings.perm.allow": "Always allow",
+    "settings.perm.ask": "Ask before running",
+    "settings.perm.deny": "Block / Deny",
 
     // ----------------------------------------------------- short UI notices
     "ui.stopping": "Stopping…",

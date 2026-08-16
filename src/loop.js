@@ -552,6 +552,7 @@ export class Agent {
       workspace,
       autoApproveCommands: this.config.autoApproveCommands,
       autoApproveEdits: this.config.autoApproveEdits !== false,
+      permissions: this.config.permissions,
       verifyEdits: this.config.verifyEdits !== false,
       mode: this.mode,
       denyCommands: this.config.denyCommands,

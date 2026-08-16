@@ -649,7 +649,11 @@ export const TOOLS = {
         if (re.test(command)) throw new ToolError(`blocked by safety rule ${re}: ${command}`);
       }
 
-      if (!ctx.autoApproveCommands || ctx.mode === "plan") {
+      const perm = checkPermission("run_command", { command }, ctx);
+      if (perm === "deny") throw new ToolError("Tool run_command is denied by configuration");
+
+      const needsAsk = perm === "ask" || WRITES_OUTSIDE.test(command) || ctx.mode === "plan" || (!ctx.autoApproveCommands && !ctx.permissions);
+      if (needsAsk) {
         const reason = WRITES_OUTSIDE.test(command)
           ? "installs or removes packages outside the workspace"
           : ctx.mode === "plan"
@@ -1095,6 +1099,59 @@ function touchedPaths(name, input) {
 }
 
 /**
+ * Check permission policy for a given tool call.
+ * @param {string} name
+ * @param {any} input
+ * @param {ToolContext} ctx
+ * @returns {"allow"|"ask"|"deny"}
+ */
+export function checkPermission(name, input, ctx) {
+  const perms = ctx.permissions || {};
+
+  let category = null;
+  if (name === "run_command") {
+    const cmd = (input?.command || "").trim();
+    if (/^git(\s|$)/.test(cmd)) {
+      category = "git";
+    } else {
+      category = "bash";
+    }
+  } else if (EDIT_TOOLS[name]) {
+    category = "file_write";
+  } else if (["read_file", "batch_read", "list_dir", "tree", "glob", "grep"].includes(name)) {
+    category = "file_read";
+  } else if (["web_search", "read_url"].includes(name)) {
+    category = "web_search";
+  } else if (name === "task") {
+    category = "subagent";
+  }
+
+  if (!category) return "allow";
+
+  let perm = perms[category];
+  if (!perm) {
+    if (category === "bash" || category === "git") {
+      perm = ctx.autoApproveCommands ? "allow" : "ask";
+    } else if (category === "file_write") {
+      perm = ctx.autoApproveEdits !== false ? "allow" : "ask";
+    } else {
+      perm = "allow";
+    }
+  }
+
+  // Plan mode override: plan mode never allows writes or auto-approves bash
+  if (ctx.mode === "plan") {
+    if (category === "file_write") return "deny";
+    if (category === "bash" || category === "git") {
+      if (perm === "deny") return "deny";
+      return "ask";
+    }
+  }
+
+  return perm;
+}
+
+/**
  * Execute one tool call.
  * @param {string} name
  * @param {any} input
@@ -1116,9 +1173,43 @@ export async function callTool(name, input, ctx) {
           "the user switches to build mode when they want it applied.",
       );
     }
-    // Explicit false only: a ToolContext built without the flag (older configs,
-    // direct callers) keeps the previous behaviour of not asking.
-    if (ctx.autoApproveEdits === false && EDIT_TOOLS[name]) {
+
+    const perm = checkPermission(name, input, ctx);
+    if (perm === "deny") {
+      throw new ToolError(`Tool ${name} is denied by configuration`);
+    }
+
+    if (perm === "ask" && name !== "run_command") {
+      if (EDIT_TOOLS[name]) {
+        const { what, reason } = EDIT_TOOLS[name](input || {});
+        const ok = await ctx.approve({ kind: "edit", command: what, cwd: ctx.workspace, reason });
+        if (!ok) throw new ToolError("the user denied this file change");
+      } else if (name === "task") {
+        const ok = await ctx.approve({
+          kind: "command",
+          command: `subagent (${input?.kind || "explore"}): ${input?.description || ""}`,
+          cwd: ctx.workspace,
+          reason: "delegates to a sub-agent",
+        });
+        if (!ok) throw new ToolError("the user denied this sub-agent");
+      } else if (name === "web_search" || name === "read_url") {
+        const ok = await ctx.approve({
+          kind: "command",
+          command: `${name}: ${input?.query || input?.url || ""}`,
+          cwd: ctx.workspace,
+          reason: "accesses the external web",
+        });
+        if (!ok) throw new ToolError("the user denied web access");
+      } else if (["read_file", "batch_read", "list_dir", "tree", "glob", "grep"].includes(name)) {
+        const ok = await ctx.approve({
+          kind: "command",
+          command: `${name} ${input?.path || input?.pattern || ""}`,
+          cwd: ctx.workspace,
+          reason: "reads from workspace",
+        });
+        if (!ok) throw new ToolError("the user denied file read");
+      }
+    } else if (ctx.autoApproveEdits === false && EDIT_TOOLS[name] && perm !== "ask") {
       const { what, reason } = EDIT_TOOLS[name](input || {});
       const ok = await ctx.approve({ kind: "edit", command: what, cwd: ctx.workspace, reason });
       if (!ok) throw new ToolError("the user denied this file change");

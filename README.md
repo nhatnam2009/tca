@@ -553,6 +553,7 @@ test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity, inst
 test/context.test.mjs      pairing, repair, compaction, the store and checkpoints
 test/discover.test.mjs     endpoint model discovery, format normalization, cache TTL
 test/markdown.test.mjs     the UI renderer, highlighter and components, in a DOM stub
+test/permissions.test.mjs  granular tool permissions, categories, and backward compatibility
 test/search.test.mjs       ripgrep parity for grep and glob, the plan tool, AGENTS.md
 test/undo.test.mjs         turn-by-turn undo/redo, conflict detection, multi-turn rollback
 test/verify.test.mjs       diagnostics, and the tool set each mode and agent gets
@@ -563,7 +564,7 @@ test/wire.test.mjs         what actually goes on the socket, for both formats
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 172 tests, no network or API key needed
+node --test test/*.test.mjs     # 178 tests, no network or API key needed
 npx tsc --noEmit                # JSDoc types, on a dev machine only
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```
