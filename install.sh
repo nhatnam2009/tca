@@ -68,6 +68,56 @@ DIAG
   return 0
 }
 
+#
+# apt tự nó có chạy được không?
+#
+# Đây là chế độ hỏng tệ nhất của Termux, và nó không tự nói ra: một lần
+# `pkg upgrade` đứt giữa transaction sẽ để libapt-pkg ở bản mới trong khi thư
+# viện nó cần vẫn là bản cũ, và từ đó apt chết:
+#
+#   CANNOT LINK EXECUTABLE "apt": library "liblz4.so.1" not found:
+#     needed by .../lib/libapt-pkg.so
+#
+# Khi đó KHÔNG sửa được bằng pkg hay apt — chính công cụ để sửa đã chết. Lời
+# khuyên "chạy pkg upgrade" của check_runs() là vô nghĩa ở đây, nên có riêng
+# một thông báo cho trường hợp này.
+apt_broken() {
+  local out
+  out="$(apt-get --version 2>&1)" && return 1
+  case "$out" in
+    *"CANNOT LINK EXECUTABLE"* | *"cannot locate symbol"* | *"library"*"not found"*) return 0 ;;
+  esac
+  return 1
+}
+
+die_apt_broken() {
+  echo -e "\n${RED}✗ apt của Termux đã hỏng. Đây không phải lỗi của dự án này.${RESET}" >&2
+  apt-get --version 2>&1 | head -1 | sed 's/^/    /' >&2
+  cat >&2 <<'DIAG'
+
+  Một lần `pkg upgrade` đã đứt giữa đường: libapt-pkg lên bản mới nhưng thư viện
+  nó cần thì chưa. Không sửa được bằng pkg hay apt, vì chính chúng đã chết.
+
+  Thử cái rẻ nhất trước — thường chỉ là mất symlink soname:
+
+    ls -la $PREFIX/lib/liblz4*
+
+  Nếu có liblz4.so.1.X.Y mà không có liblz4.so.1 thì tạo lại link:
+
+    ln -sf $PREFIX/lib/liblz4.so.1.X.Y $PREFIX/lib/liblz4.so.1
+    apt-get --version
+
+  Không còn file nào để link thì dựng lại bootstrap: Cài đặt Android > Ứng dụng
+  > Termux > Bộ nhớ > Xoá dữ liệu, mở Termux lại (nó tự bung bootstrap mới), rồi
+  chạy lại lệnh cài một dòng.
+
+  Nếu Termux tải từ Google Play: gỡ và cài lại từ F-Droid. Bản trên Play đã bị bỏ
+  từ lâu và vỡ đúng kiểu này mỗi lần nâng cấp.
+
+DIAG
+  exit 1
+}
+
 echo -e "${BOLD}"
 echo "  ╔════════════════════════════════════╗"
 echo "  ║   TCA · coding agent cho Termux    ║"
@@ -85,6 +135,11 @@ if in_termux; then
   export DEBIAN_FRONTEND=noninteractive
   KEEP=(-o "Dpkg::Options::=--force-confold" -o "Dpkg::Options::=--force-confdef")
 
+  # Trước khi làm gì khác. Đi tiếp trên một apt đã chết chỉ sinh ra một chuỗi lỗi
+  # phái sinh vô nghĩa — "không có gói 'nodejs' trong repo này" khi gói vẫn còn
+  # đó, chỉ là apt không đọc được danh sách nữa.
+  apt_broken && die_apt_broken
+
   # Hoàn tất gói cài dở từ lần trước (no-op nếu không có gì dở dang).
   dpkg --configure -a --force-confold >/dev/null 2>&1 || true
 
@@ -98,14 +153,34 @@ if in_termux; then
   # Không ẩn output: đây là bước dài nhất và cũng là bước dễ hỏng nhất, nên khi
   # có chuyện bạn phải đọc được nó đã làm gì thay vì chỉ thấy một cảnh báo.
   info "đang nâng cấp hệ thống (bước quan trọng nhất, có thể mất vài phút)…"
-  if ! apt-get upgrade -y "${KEEP[@]}" 2>&1 | tail -25; then
-    warn "apt upgrade không xong. Nếu bước sau lỗi thư viện, chạy lại lệnh này bằng tay:"
-    warn "  pkg upgrade -y -o Dpkg::Options::=--force-confold"
+  # PIPESTATUS, không phải $?: qua `| tail` thì $? là mã thoát của tail và luôn
+  # bằng 0, nên nhánh lỗi ở đây trước giờ gần như không bao giờ chạy — một lần
+  # upgrade thất bại vẫn đi tiếp như thể mọi thứ ổn.
+  apt-get upgrade -y "${KEEP[@]}" 2>&1 | tail -25
+  upgrade_rc="${PIPESTATUS[0]}"
+
+  # Kiểm ngay tại đây, vì đây đúng là chỗ apt hay tự giết mình. Bắt ở đây thì
+  # thông báo còn dính liền với bước vừa gây ra nó.
+  apt_broken && die_apt_broken
+
+  if [ "$upgrade_rc" -ne 0 ]; then
+    echo -e "\n${RED}✗ Nâng cấp hệ thống thất bại (mã $upgrade_rc).${RESET}" >&2
+    cat >&2 <<'DIAG'
+
+  Dừng ở đây là có chủ ý. Cài gói lên một hệ thống mới nâng cấp nửa vời chính là
+  thứ tạo ra lỗi "CANNOT LINK EXECUTABLE" — đi tiếp sẽ làm hỏng thêm, không sửa.
+
+  Thường là mirror đang không đồng bộ. Đổi mirror rồi chạy lại lệnh cài:
+
+    termux-change-repo
+    pkg upgrade -y -o Dpkg::Options::=--force-confold
+
+DIAG
+    exit 1
   fi
 
   # nodejs+git là bắt buộc. Còn lại làm agent mạnh hơn rõ rệt và đều rất nhẹ:
-  #   ripgrep  tool grep nhanh hơn nhiều lần thay vì tự đọc file bằng JS
-  #   fd       tool glob nhanh hơn
+  #   ripgrep  lo cả grep và glob, nhanh hơn nhiều lần so với đọc file bằng JS
   #   termux-api  wake lock + thông báo khi agent xong việc
   #   jq       nhiều lệnh agent hay dùng cần nó
   REQUIRED=(nodejs git)
@@ -122,12 +197,44 @@ if in_termux; then
     fi
   done
 
+  # Không tra được gói nào nghĩa là danh sách gói rỗng, chứ không phải repo thiếu
+  # cả nodejs lẫn git. Đi tiếp từ đây chỉ in ra một loạt "thất bại" rồi kết thúc
+  # bằng một dấu ✓ sai sự thật.
+  if [ ${#WANT[@]} -eq 0 ]; then
+    echo -e "\n${RED}✗ apt không tra được gói nào, kể cả nodejs.${RESET}" >&2
+    cat >&2 <<'DIAG'
+
+  Danh sách gói đang rỗng hoặc không đọc được — không phải repo thiếu nodejs.
+  Gần như luôn là do `apt update` ở trên đã thất bại.
+
+    termux-change-repo
+    pkg update && pkg upgrade -y -o Dpkg::Options::=--force-confold
+
+  Rồi chạy lại lệnh cài một dòng.
+
+DIAG
+    exit 1
+  fi
+
   info "đang cài: ${WANT[*]}"
   if ! apt-get install -y "${KEEP[@]}" "${WANT[@]}" >/dev/null 2>&1; then
     warn "cài cả lượt thất bại, thử từng gói…"
     for pkg in "${WANT[@]}"; do
       apt-get install -y "${KEEP[@]}" "$pkg" >/dev/null 2>&1 && ok "$pkg" || warn "$pkg thất bại"
     done
+  fi
+
+  # Chỉ nói xong khi thứ bắt buộc thật sự có mặt. Dòng ✓ này trước đây in vô điều
+  # kiện, nên một lần cài không đặt được gói nào vẫn báo thành công — rồi để bước
+  # sau báo "không có node" mà không nói vì sao.
+  missing=()
+  command -v node >/dev/null 2>&1 || missing+=(nodejs)
+  command -v git >/dev/null 2>&1 || missing+=(git)
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo -e "\n${RED}✗ Thiếu gói bắt buộc sau khi cài: ${missing[*]}${RESET}" >&2
+    apt_broken && die_apt_broken
+    echo "  Chạy tay để xem apt nói gì:  pkg install ${missing[*]}" >&2
+    exit 1
   fi
   ok "xong phần gói"
 else
