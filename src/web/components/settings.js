@@ -127,6 +127,10 @@ export function fillSettings(cfg, provId, lang) {
   if ($("cfg-lang")) $("cfg-lang").value = normaliseLang(cfg.lang || lang);
   if ($("cfg-instructions")) $("cfg-instructions").value = cfg.instructions || "";
   if ($("cfg-deny")) $("cfg-deny").value = (cfg.denyCommands || []).join("\n");
+  const budget = cfg.budget || {};
+  if ($("cfg-budget-cost")) $("cfg-budget-cost").value = budget.maxCostPerSession || "";
+  if ($("cfg-budget-tokens")) $("cfg-budget-tokens").value = budget.maxTokensPerSession || "";
+  if ($("cfg-budget-warn")) $("cfg-budget-warn").value = budget.warnAtPercent ?? 80;
   fillProvider(cfg, provId);
 }
 
@@ -372,6 +376,10 @@ export function readSettings(cfg, provId) {
   if ($("cfg-lang")) cfg.lang = normaliseLang($("cfg-lang").value);
   if ($("cfg-instructions")) cfg.instructions = $("cfg-instructions").value;
   if ($("cfg-deny")) cfg.denyCommands = $("cfg-deny").value.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (!cfg.budget) cfg.budget = {};
+  if ($("cfg-budget-cost")) cfg.budget.maxCostPerSession = Math.max(0, Number($("cfg-budget-cost").value) || 0);
+  if ($("cfg-budget-tokens")) cfg.budget.maxTokensPerSession = Math.max(0, Number($("cfg-budget-tokens").value) || 0);
+  if ($("cfg-budget-warn")) cfg.budget.warnAtPercent = Math.max(1, Math.min(100, Number($("cfg-budget-warn").value) || 80));
 }
 
 export function render(state) {

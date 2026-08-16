@@ -354,6 +354,20 @@ export function handleEvent(ev) {
       loadSessions().catch(() => {});
       break;
     }
+    case "budget_warning": {
+      const msg = ev.kind === "cost"
+        ? `Warning: Reached ${ev.percent}% of session cost limit ($${(ev.current || 0).toFixed(2)} / $${(ev.limit || 0).toFixed(2)})`
+        : `Warning: Reached ${ev.percent}% of session token limit (${ev.current || 0} / ${ev.limit || 0})`;
+      toast(msg, "warn");
+      break;
+    }
+    case "budget_exceeded": {
+      const msg = ev.kind === "cost"
+        ? `Budget exceeded: Reached cost limit of $${(ev.limit || 0).toFixed(2)}`
+        : `Budget exceeded: Reached token limit of ${ev.limit || 0} tokens`;
+      toast(msg, "error");
+      break;
+    }
     case "error":
       Chat.flushRender();
       Chat.setTurn(null);

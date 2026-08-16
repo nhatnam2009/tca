@@ -548,6 +548,7 @@ tools/drop-i18n-keys.mjs      removes i18n keys by name, line-accurately
 tools/check-no-tty-start.mjs  starts the daemon with no TTY, checks it never asks
 tools/check-fetch-source.sh   install.sh's libcurl repair and size report, against fakes
 test/agent.test.mjs        end-to-end against a fake provider
+test/budget.test.mjs       session budget limits, threshold warnings, and cost cutoff
 test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity, install.sh
 test/context.test.mjs      pairing, repair, compaction, the store and checkpoints
 test/discover.test.mjs     endpoint model discovery, format normalization, cache TTL
@@ -562,7 +563,7 @@ test/wire.test.mjs         what actually goes on the socket, for both formats
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 168 tests, no network or API key needed
+node --test test/*.test.mjs     # 172 tests, no network or API key needed
 npx tsc --noEmit                # JSDoc types, on a dev machine only
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```

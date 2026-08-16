@@ -309,6 +309,8 @@ const SUBAGENT_EVENTS = new Set([
   "text_delta",
   "approval_request",
   "approval_closed",
+  "budget_warning",
+  "budget_exceeded",
 ]);
 
 export class Agent {
@@ -340,6 +342,8 @@ export class Agent {
     this.seq = 0;
     this.subSeq = 0;
     this.turn = 0;
+    this.warnedBudgetCost = false;
+    this.warnedBudgetTokens = false;
     /** Accumulated over the whole turn, including sub-agents. */
     this.spend = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
   }
@@ -645,6 +649,38 @@ export class Agent {
             contextWindow,
             contextUsed: usage.input || estimateTokens(history),
           });
+
+          // Check budget limits
+          const budget = this.config.budget;
+          if (budget) {
+            const maxCost = Number(budget.maxCostPerSession) || 0;
+            const maxTokens = Number(budget.maxTokensPerSession) || 0;
+            const warnPct = Number(budget.warnAtPercent) || 80;
+            const currentCost = this.spend.cost;
+            const currentTokens = this.spend.input + this.spend.output;
+
+            if (!this.warnedBudgetCost && maxCost > 0 && currentCost >= maxCost * (warnPct / 100)) {
+              this.warnedBudgetCost = true;
+              this.emit({ type: "budget_warning", kind: "cost", percent: warnPct, current: currentCost, limit: maxCost });
+            }
+            if (!this.warnedBudgetTokens && maxTokens > 0 && currentTokens >= maxTokens * (warnPct / 100)) {
+              this.warnedBudgetTokens = true;
+              this.emit({ type: "budget_warning", kind: "tokens", percent: warnPct, current: currentTokens, limit: maxTokens });
+            }
+
+            if (maxCost > 0 && currentCost >= maxCost) {
+              outcome = { kind: "stuck", detail: `reached cost limit of $${maxCost.toFixed(2)}` };
+              this.emit({ type: "budget_exceeded", kind: "cost", limit: maxCost, current: currentCost });
+              this.emit({ type: "error", message: `Session stopped: reached cost limit of $${maxCost.toFixed(2)}` });
+              return assistantText.trim();
+            }
+            if (maxTokens > 0 && currentTokens >= maxTokens) {
+              outcome = { kind: "stuck", detail: `reached token limit of ${maxTokens}` };
+              this.emit({ type: "budget_exceeded", kind: "tokens", limit: maxTokens, current: currentTokens });
+              this.emit({ type: "error", message: `Session stopped: reached token limit of ${maxTokens} tokens` });
+              return assistantText.trim();
+            }
+          }
         }
 
         await this.history.append({

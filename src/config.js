@@ -101,6 +101,11 @@ export function defaultConfig() {
     port: 8787,
     instructions: "",
     denyCommands: [],
+    budget: {
+      maxCostPerSession: 0,
+      maxTokensPerSession: 0,
+      warnAtPercent: 80,
+    },
     providers: {},
   };
 }
@@ -132,6 +137,7 @@ export function loadConfig() {
     throw new Error(`Config at ${file} is not valid JSON: ${/** @type {Error} */ (err).message}`);
   }
   const merged = { ...defaultConfig(), ...raw };
+  merged.budget = { ...defaultConfig().budget, ...(raw.budget || {}) };
   merged.providers = { ...defaultConfig().providers, ...(raw.providers || {}) };
 
   /** @type {Config} */

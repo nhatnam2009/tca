@@ -728,6 +728,50 @@
             </p>
           </fieldset>
 
+          <fieldset>
+            <legend data-i18n="settings.budget.legend">Budget limits</legend>
+
+            <label for="cfg-budget-cost" data-i18n="settings.budget.costLabel">Max cost per session ($ USD)</label>
+            <input
+              id="cfg-budget-cost"
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="0 (unlimited)"
+              aria-describedby="budget-cost-hint"
+            />
+            <p id="budget-cost-hint" class="muted small" data-i18n="settings.budget.costHint">
+              0 = unlimited. Stops the agent turn if spent cost reaches this limit.
+            </p>
+
+            <label for="cfg-budget-tokens" data-i18n="settings.budget.tokensLabel">Max tokens per session</label>
+            <input
+              id="cfg-budget-tokens"
+              type="number"
+              step="1000"
+              min="0"
+              placeholder="0 (unlimited)"
+              aria-describedby="budget-tokens-hint"
+            />
+            <p id="budget-tokens-hint" class="muted small" data-i18n="settings.budget.tokensHint">
+              0 = unlimited. Stops the agent turn if token count reaches this limit.
+            </p>
+
+            <label for="cfg-budget-warn" data-i18n="settings.budget.warnLabel">Warn at threshold (%)</label>
+            <input
+              id="cfg-budget-warn"
+              type="number"
+              step="5"
+              min="1"
+              max="100"
+              placeholder="80"
+              aria-describedby="budget-warn-hint"
+            />
+            <p id="budget-warn-hint" class="muted small" data-i18n="settings.budget.warnHint">
+              Warns once when consumption reaches this percentage of the configured limit.
+            </p>
+          </fieldset>
+
           <div class="row sticky-actions">
             <button id="btn-save-config" class="btn primary grow" type="submit" data-i18n="settings.save">
               Save settings

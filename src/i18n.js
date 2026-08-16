@@ -360,6 +360,14 @@ export const DICT = {
     "agent.deny": "Lệnh bị chặn",
     "agent.denyHint": "Mỗi dòng một biểu thức chính quy. Lệnh khớp luôn bị chặn, kể cả khi đã bật tự động cho phép.",
 
+    "settings.budget.legend": "Giới hạn ngân sách",
+    "settings.budget.costLabel": "Chi phí tối đa mỗi phiên ($ USD)",
+    "settings.budget.costHint": "0 = không giới hạn. Dừng agent nếu chi phí vượt mức này.",
+    "settings.budget.tokensLabel": "Tổng token tối đa mỗi phiên",
+    "settings.budget.tokensHint": "0 = không giới hạn. Dừng agent nếu số token vượt mức này.",
+    "settings.budget.warnLabel": "Cảnh báo khi đạt mức (%)",
+    "settings.budget.warnHint": "Hiện cảnh báo khi mức tiêu thụ đạt phần trăm này.",
+
     // ------------------------------------------------------- thông báo ngắn
     "ui.stopping": "Đang dừng…",
     "ui.searching": "Đang tìm…",
@@ -765,6 +773,14 @@ export const DICT = {
     "agent.instructionsHint": "Appended to the system prompt for every session.",
     "agent.deny": "Denied commands",
     "agent.denyHint": "One regular expression per line. Matching commands are always blocked, even with auto-approve on.",
+
+    "settings.budget.legend": "Budget limits",
+    "settings.budget.costLabel": "Max cost per session ($ USD)",
+    "settings.budget.costHint": "0 = unlimited. Stops the agent turn if spent cost reaches this limit.",
+    "settings.budget.tokensLabel": "Max tokens per session",
+    "settings.budget.tokensHint": "0 = unlimited. Stops the agent turn if token count reaches this limit.",
+    "settings.budget.warnLabel": "Warn at threshold (%)",
+    "settings.budget.warnHint": "Warns once when consumption reaches this percentage of the configured limit.",
 
     // ----------------------------------------------------- short UI notices
     "ui.stopping": "Stopping…",
