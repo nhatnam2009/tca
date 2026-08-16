@@ -33,6 +33,17 @@ die()  { echo -e "\n${RED}✗ $1${RESET}\n" >&2; exit 1; }
 
 in_termux() { [ -n "${TERMUX_VERSION:-}" ] && [ -n "${PREFIX:-}" ]; }
 
+# Byte -> chuỗi người đọc được. Có vì con số duy nhất apt đưa ra chắc chắn đúng
+# là tổng byte của các file .deb, và "412430336" không nói với ai điều gì.
+human_bytes() {
+  awk -v b="${1:-0}" 'BEGIN {
+    if (b >= 1073741824) printf "%.1f GB", b / 1073741824;
+    else if (b >= 1048576) printf "%.0f MB", b / 1048576;
+    else if (b >= 1024) printf "%.0f kB", b / 1024;
+    else printf "%d B", b;
+  }'
+}
+
 # ── Lỗi lệch thư viện của Termux ─────────────────────────────────────────────
 #
 # Đây là cách hỏng phổ biến nhất trên Termux, và nó KHÔNG phải lỗi của dự án
@@ -341,18 +352,34 @@ DIAG
     exit 1
   fi
 
-  # Dung lượng lấy từ chính apt (`-s` = chạy khô), không phải số ước lượng viết
-  # cứng trong script. Số viết cứng sai ngay lần repo đổi bản, và sai theo hướng
-  # tệ nhất: bạn tin nó rồi hết dung lượng giữa lúc cài.
+  # Dung lượng lấy từ chính apt, không phải số ước lượng viết cứng trong script.
+  # Số viết cứng sai ngay lần repo đổi bản, và sai theo hướng tệ nhất: bạn tin nó
+  # rồi hết dung lượng giữa lúc cài.
+  #
+  # `--print-uris` chứ không phải `-s`: bản `-s` trên máy thật in ra "Inst …" mà
+  # không in dòng "Need to get", nên nhánh nào cũng không khớp và bước này im
+  # lặng hoàn toàn — đúng cái nó tồn tại để tránh. `--print-uris` in một dòng
+  # mỗi file .deb kèm số byte ở cột 3, cộng lại là con số thật sẽ tải về.
   info "đang tính dung lượng cần tải…"
-  if plan="$(apt-get install -y -s "${KEEP[@]}" "${WANT[@]}" 2>/dev/null)"; then
-    need="$(printf '%s\n' "$plan" | sed -n 's/^Need to get \(.*\) of archives.*/\1/p')"
-    disk="$(printf '%s\n' "$plan" | sed -n 's/^After this operation, \(.*\) of additional disk space.*/\1/p')"
-    count="$(printf '%s\n' "$plan" | grep -c '^Inst ' || true)"
-    [ -n "$need" ] && info "cần tải: ${need}${disk:+, chiếm thêm ${disk} bộ nhớ}"
-    [ -z "$need" ] && [ "$count" = "0" ] && info "mọi gói đã có sẵn, không cần tải gì"
+  bytes="$(
+    apt-get install -y --print-uris "${KEEP[@]}" "${WANT[@]}" 2>/dev/null |
+      awk '{ if ($3 ~ /^[0-9]+$/) total += $3 } END { print total + 0 }'
+  )"
+  case "$bytes" in '' | *[!0-9]*) bytes=0 ;; esac
+
+  # Chỗ chiếm thêm sau khi giải nén thì chỉ `-s` biết, và dòng đó có hay không
+  # cũng không sao — nó chỉ là phần thêm vào câu.
+  disk="$(
+    apt-get install -y -s "${KEEP[@]}" "${WANT[@]}" 2>/dev/null |
+      sed -n 's/^After this operation, \(.*\) of additional disk space.*/\1/p'
+  )"
+
+  if [ "$bytes" -gt 0 ]; then
+    info "cần tải: $(human_bytes "$bytes")${disk:+, chiếm thêm ${disk} bộ nhớ}"
+  elif [ -n "$disk" ]; then
+    info "không cần tải gì (đã có trong cache), chiếm thêm ${disk} bộ nhớ"
   else
-    warn "không tính được dung lượng trước, vẫn cài tiếp"
+    info "mọi gói đã có sẵn, không cần tải gì"
   fi
 
   # Một lệnh cho tất cả: apt giải phụ thuộc một lần và tải song song, nhanh hơn
@@ -476,9 +503,29 @@ fetch_source() {
       #   cannot locate symbol "curl_global_trace" referenced by git-remote-http
       # Khuyên `pkg reinstall git` ở đây là vô ích — git không phải thứ hỏng.
       *git-remote-http* | *curl_global* | *libcurl*)
-        warn "không phải git hỏng, mà libcurl đang cũ hơn bản git được build cho. Sửa:"
-        warn "  pkg upgrade -y -o Dpkg::Options::=--force-confold"
-        warn "  pkg install --reinstall libcurl" ;;
+        warn "không phải git hỏng, mà libcurl đang cũ hơn bản git được build cho."
+        # Biết chắc cách sửa thì sửa, đừng in ra rồi bỏ mặc. Rơi xuống tarball
+        # vẫn cài được, nhưng thư mục sẽ không có .git và `tca update` mất luôn —
+        # một hệ quả lâu dài cho một lỗi sửa được bằng một lệnh. Đây cũng đúng
+        # cách phần apt ở trên đã làm: chẩn đoán được thì tự sửa.
+        if in_termux; then
+          info "đang cài lại libcurl rồi thử clone lại…"
+          # Clone dở dang để lại một thư mục chỉ có .git. Xoá đúng trường hợp đó,
+          # chứ không xoá bất cứ thứ gì người dùng có thể đã đặt ở đây.
+          if [ -d "$dest/.git" ] && [ ! -e "$dest/src/cli.js" ]; then
+            rm -rf "$dest"
+          fi
+          if apt-get install -y --reinstall "${KEEP[@]}" libcurl >/dev/null 2>&1 &&
+            out="$(git clone --depth 1 "$repo" "$dest" 2>&1)"; then
+            ok "đã cài lại libcurl và clone vào $dest"
+            return 0
+          fi
+          warn "cài lại libcurl rồi vẫn không clone được:"
+          printf '%s\n' "$out" | tail -3 | sed 's/^/      /' >&2
+        else
+          warn "  pkg install --reinstall libcurl"
+        fi
+        ;;
       *"CANNOT LINK EXECUTABLE"* | *"cannot locate symbol"*)
         warn "git bị lệch thư viện. Sửa: pkg upgrade -y, rồi pkg install --reinstall git" ;;
       *certificate* | *SSL* | *TLS*)
@@ -664,8 +711,11 @@ echo ""
 if in_termux; then
   echo -e "  ${BOLD}Gõ:${RESET}  ${BOLD}${GREEN}nhatnam${RESET}"
   echo ""
-  info "rồi mở đường link nó in ra trong Chrome."
-  info "Mở tab Power trong web UI để cấp thêm quyền cho agent mạnh nhất."
+  info "Lần đầu nó sẽ hỏi có ghép nối ADB không dây không — nên trả lời có."
+  info "Không có bước đó, Android giết tiến trình con của agent giữa lúc chạy."
+  info "Trả lời một lần là xong: lần sau nó tự kết nối lại."
+  echo ""
+  info "Rồi mở đường link nó in ra trong Chrome."
 else
   echo -e "  ${BOLD}Gõ:${RESET}  ${BOLD}${GREEN}tca serve${RESET}"
   echo ""

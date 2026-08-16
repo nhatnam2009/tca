@@ -70,6 +70,13 @@ it looks like, and then falls back to fetching the tarball with curl, which is
 demonstrably working because it is how the script itself arrived. git is only
 needed to *update* later, not to install.
 
+One of those causes is repaired rather than just reported. When the failure is in
+git's https remote helper — `cannot locate symbol "curl_global_trace"` — git is
+fine and `libcurl` is stale, so the installer reinstalls libcurl and clones again.
+A device hit this and got the tarball instead: the install worked, but `~/tca` had
+no `.git` and `tca update` was gone for good. Printing the right diagnosis and
+then taking the lossy path anyway is not much better than printing the wrong one.
+
 It installs every package the agent can use in one `apt-get` pass, clones into
 `~/tca`, creates the `tca` and `nhatnam` commands, asks Android for storage
 permission, sets up a service so the daemon survives being killed, and stops. It
@@ -512,6 +519,7 @@ install.sh           the one-command install, non-interactive
 tools/gen-seed.mjs   regenerates the offline catalog
 tools/drop-i18n-keys.mjs      removes i18n keys by name, line-accurately
 tools/check-no-tty-start.mjs  starts the daemon with no TTY, checks it never asks
+tools/check-fetch-source.sh   install.sh's libcurl repair and size report, against fakes
 test/agent.test.mjs        end-to-end against a fake provider
 test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity, install.sh
 test/context.test.mjs      pairing, repair, compaction, the store and checkpoints

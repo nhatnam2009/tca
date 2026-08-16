@@ -435,11 +435,23 @@ test("install.sh installs every package the capability table names, in one pass"
   // remains is the fallback for when the batch fails.
   assert.match(sh, /apt-get install -y "\$\{KEEP\[@\]\}" "\$\{WANT\[@\]\}"/, "there should be one batched install");
 
-  // The size shown before installing comes from apt's own dry run. Numbers typed
-  // into the script go stale the first time a package is rebuilt, and they go
-  // stale in the worst direction: you trust them and then run out of space.
-  assert.match(sh, /apt-get install -y -s /, "the size estimate should come from apt -s");
-  assert.match(sh, /Need to get/, "parse apt's own download size");
+  // The size shown before installing comes from apt itself. Numbers typed into
+  // the script go stale the first time a package is rebuilt, and they go stale in
+  // the worst direction: you trust them and then run out of space.
+  //
+  // --print-uris, not -s, and the device is why. `apt-get install -s` there
+  // printed "Inst ..." lines with no "Need to get" line at all, so the parse
+  // matched nothing and the step printed nothing - a silent failure of the one
+  // thing it exists to do. --print-uris always lists one line per .deb with the
+  // size in the third column.
+  assert.match(sh, /apt-get install -y --print-uris /, "the download size should come from --print-uris");
+  assert.match(sh, /human_bytes/, "raw byte counts are not a report");
+  assert.doesNotMatch(sh, /sed -n 's\/\^Need to get/, "do not parse a line apt does not reliably print");
+
+  // The fall-through has to be exhaustive: something is always printed, whether
+  // there is a download, only unpacking to do, or nothing at all.
+  assert.match(sh, /không cần tải gì/, "the cached case needs its own line");
+  assert.match(sh, /mọi gói đã có sẵn/, "the nothing-to-do case needs its own line");
 
   // The heavy half must stay opt-out, and skipping it must not skip the rest.
   assert.match(sh, /TCA_SKIP_HEAVY/, "there should be a way to skip the 500MB of optional packages");
@@ -546,4 +558,38 @@ test("startup asks about privileges, but never when there is no terminal", () =>
   // adb-setup sets a failing exit code on a failed attempt; the daemon keeps
   // running afterwards, so that must not leak into `nhatnam`'s exit status.
   assert.match(js, /process\.exitCode = 0/, "a failed pairing must not fail the whole run");
+});
+
+test("install.sh does not point at the Power tab that no longer exists", () => {
+  // The device ran the pushed installer and its closing line was still "Mo tab
+  // Power trong web UI" - advice for a screen removed in the same commit. That
+  // message is the one part of the script every user definitely reads.
+  const sh = fs.readFileSync(path.join(HERE, "..", "install.sh"), "utf8");
+  for (const dead of ["tab Power", "Power tab", "panel-power", "tab-power"]) {
+    assert.ok(!sh.includes(dead), `install.sh still sends people to ${dead}`);
+  }
+
+  // What it should say instead: the thing that now does need a human, once. The
+  // closing block only, since ADB is mentioned in comments all over the file.
+  const closing = sh.slice(sh.indexOf("nhatnam${RESET}"));
+  assert.ok(closing, "the closing message should still be there");
+  assert.match(closing, /ADB/, "it should mention the pairing question nhatnam asks");
+});
+
+test("install.sh repairs a stale libcurl instead of silently losing .git", () => {
+  // git's https remote helper links libcurl separately, so a stale libcurl breaks
+  // clone while `git --version` keeps working. Falling back to the tarball hides
+  // it: the install succeeds and `tca update` is gone, with no .git to update
+  // from. The diagnosis was already correct here - the repair is what was missing.
+  const sh = fs.readFileSync(path.join(HERE, "..", "install.sh"), "utf8");
+  assert.match(sh, /--reinstall "\$\{KEEP\[@\]\}" libcurl/, "it should reinstall libcurl itself");
+
+  // And the retry has to come before the tarball, or the repair buys nothing.
+  const repair = sh.indexOf("--reinstall");
+  const tarball = sh.indexOf("tarurl=");
+  assert.ok(repair !== -1 && tarball !== -1 && repair < tarball, "repair and retry before falling back");
+
+  // Deleting a half-finished clone is fine; deleting someone's working tree is
+  // not. The guard has to check for real content, not just for the directory.
+  assert.match(sh, /\[ -d "\$dest\/\.git" \] && \[ ! -e "\$dest\/src\/cli\.js" \]/, "only remove a partial clone");
 });
