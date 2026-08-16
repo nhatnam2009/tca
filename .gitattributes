@@ -1,0 +1,8 @@
+# The code runs on Android/Termux. A shell script checked out with CRLF fails
+# with "bash: \r: command not found", so line endings are LF everywhere,
+# regardless of the core.autocrlf setting on whatever machine edits the files.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.zip binary
