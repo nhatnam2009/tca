@@ -23,9 +23,19 @@ process.env.TCA_CONFIG = path.join(TMP, "config.json");
 
 const { DICT, LANGS, t, pickLang, DEFAULT_LANG } = await import("../src/i18n.js");
 const { CAPABILITIES, TIERS, packagesFor, getCapabilities } = await import("../src/capabilities.js");
-const { UNLOCKS, validAddress, validCode, adbPair, adbConnect, detectBackend } = await import(
-  "../src/privilege.js"
-);
+const {
+  UNLOCKS,
+  validAddress,
+  validCode,
+  adbPair,
+  adbConnect,
+  detectBackend,
+  adbStatePath,
+  saveAdbAddress,
+  readAdbAddress,
+  forgetAdbAddress,
+  adbReconnect,
+} = await import("../src/privilege.js");
 const { getStatus } = await import("../src/status.js");
 const { serve } = await import("../src/daemon.js");
 
@@ -273,7 +283,7 @@ test("detectBackend reports every path, and picks none when nothing is available
 
 /* ----------------------------------------------------------------- routes */
 
-test("the capability routes work, and the install route is a narrow door", async (t) => {
+test("the capability and install routes are gone, not sitting there unreachable", async (t) => {
   fs.writeFileSync(
     process.env.TCA_CONFIG,
     JSON.stringify({ active: "", providers: {}, workspace: path.join(TMP, "ws") }),
@@ -286,23 +296,14 @@ test("the capability routes work, and the install route is a narrow door", async
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers || {}) },
     });
 
-  const caps = await (await call("/api/capabilities")).json();
-  assert.ok(caps.groups.length);
-  assert.ok(typeof caps.score.percent === "number");
-  assert.ok(caps.privilege, "the Power panel needs the privilege block");
-
-  // Language follows the query string.
-  const en = await (await call("/api/capabilities?lang=en")).json();
-  assert.equal(en.lang, "en");
-
-  // The privilege state rides along with the capabilities payload; there is no
-  // separate route for it any more.
-  assert.ok(caps.privilege && "kind" in caps.privilege && "root" in caps.privilege);
-
-  // The ADB wizard moved to the terminal, so its routes are gone rather than
-  // sitting there unreachable. `tca serve` applies privileges on startup and
-  // retries in the background; a browser wizard could only be a worse copy.
+  // The Power tab is gone: install.sh installs everything in one pass, and the
+  // diagnostics live in `tca doctor`. These routes have no caller left, and a
+  // dead endpoint that can drive a package manager is not something to leave
+  // listening - so their absence is the assertion.
   for (const [method, p] of [
+    ["GET", "/api/capabilities"],
+    ["POST", "/api/capabilities/install"],
+    ["POST", "/api/privilege/boot-script"],
     ["GET", "/api/privilege"],
     ["POST", "/api/privilege/recheck"],
     ["POST", "/api/privilege/pair"],
@@ -315,19 +316,16 @@ test("the capability routes work, and the install route is a narrow door", async
     assert.equal(res.status, 404, `${method} ${p} should be gone`);
   }
 
-  // An unknown capability id must not reach a package manager. Off Termux the
-  // route refuses everything, which is itself the first line of defence.
-  for (const body of [{ id: "nope" }, { id: "" }, { id: "__proto__" }, {}]) {
-    const res = await call("/api/capabilities/install", { method: "POST", body: JSON.stringify(body) });
-    assert.ok(res.status === 400 || res.status === 404, `install ${JSON.stringify(body)} -> ${res.status}`);
-  }
+  // What replaced them: the same data, in process, for `tca doctor`.
+  const caps = await getCapabilities("en");
+  assert.ok(caps.groups.length);
+  assert.equal(caps.lang, "en");
+  assert.ok(typeof caps.score.percent === "number");
 
-  // The i18n table is reachable without a token, and holds both languages.
+  // The i18n table is still reachable without a token, and still holds both
+  // languages for every group the doctor renders.
   const dict = await (await fetch(`http://127.0.0.1:${port}/assets/i18n.json`)).json();
   assert.deepEqual(dict.langs, ["vi", "en"]);
-  // Driven off the payload rather than a hardcoded key, which is how this
-  // assertion went stale when the tiers were renamed: it was still checking
-  // tier.required long after the tiers became core/device/optional.
   for (const group of caps.groups) {
     for (const key of [group.titleKey, group.hintKey]) {
       assert.ok(dict.dict.vi[key], `vi is missing ${key}`);
@@ -405,4 +403,147 @@ test("copyRishFiles finds the export, copies both files, and says why when it ca
     else process.env.HOME = original;
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("install.sh installs every package the capability table names, in one pass", () => {
+  // This is the drift the Power tab used to paper over: capabilities.js grew a
+  // package, install.sh did not, and the fix was a button in the UI offering to
+  // install it later. With that button gone, the two lists have to agree here.
+  const sh = fs.readFileSync(path.join(HERE, "..", "install.sh"), "utf8");
+
+  /** Read a `NAME=(a b c)` array out of the script. */
+  const arrayOf = (name) => {
+    const m = new RegExp(`^\\s*${name}=\\(([^)]*)\\)`, "m").exec(sh);
+    assert.ok(m, `install.sh should declare ${name}=(...)`);
+    return m[1].split(/\s+/).filter(Boolean);
+  };
+
+  const installs = new Set([...arrayOf("REQUIRED"), ...arrayOf("TOOLS"), ...arrayOf("HEAVY")]);
+  for (const cap of CAPABILITIES) {
+    for (const pkg of packagesFor(cap.id) || []) {
+      assert.ok(installs.has(pkg), `install.sh never installs ${pkg}, needed by capability "${cap.id}"`);
+    }
+  }
+
+
+  // adb is not a capability, but the startup pairing flow shells out to it, so a
+  // successful install has to leave it on PATH.
+  assert.ok(installs.has("android-tools"), "adb comes from android-tools");
+
+  // One batched apt-get for the whole list. Installing them one at a time made a
+  // first run take minutes longer for no benefit; the per-package loop that
+  // remains is the fallback for when the batch fails.
+  assert.match(sh, /apt-get install -y "\$\{KEEP\[@\]\}" "\$\{WANT\[@\]\}"/, "there should be one batched install");
+
+  // The size shown before installing comes from apt's own dry run. Numbers typed
+  // into the script go stale the first time a package is rebuilt, and they go
+  // stale in the worst direction: you trust them and then run out of space.
+  assert.match(sh, /apt-get install -y -s /, "the size estimate should come from apt -s");
+  assert.match(sh, /Need to get/, "parse apt's own download size");
+
+  // The heavy half must stay opt-out, and skipping it must not skip the rest.
+  assert.match(sh, /TCA_SKIP_HEAVY/, "there should be a way to skip the 500MB of optional packages");
+  const heavy = arrayOf("HEAVY");
+  for (const pkg of ["python", "clang"]) assert.ok(heavy.includes(pkg), `${pkg} belongs in HEAVY`);
+  for (const pkg of arrayOf("REQUIRED")) assert.ok(!heavy.includes(pkg), `${pkg} is required, not optional`);
+});
+
+/**
+ * Remembering the ADB address.
+ *
+ * The point of it is the reboot: Android keeps the pairing and drops the
+ * connection, so a saved address turns "type the whole wizard again" into one
+ * silent `adb connect`. What has to hold is that only a proven address is
+ * written, and that nothing on disk is trusted on the way back out.
+ */
+test("a proven ADB address is remembered, and re-validated when read back", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tca-adb-"));
+  const original = process.env.TCA_HOME;
+  process.env.TCA_HOME = home;
+  try {
+    // It belongs in the private state dir, not the config on shared storage:
+    // any app with "All files access" can read that, and this points at a
+    // debugging port on the device.
+    assert.ok(adbStatePath().startsWith(home), `${adbStatePath()} is outside the state dir`);
+    assert.equal(path.basename(adbStatePath()), "adb.json");
+
+    assert.equal(readAdbAddress(), null, "nothing is saved to begin with");
+    assert.equal(adbReconnect instanceof Function, true);
+
+    assert.equal(saveAdbAddress("192.168.1.5:41235"), true);
+    assert.equal(readAdbAddress(), "192.168.1.5:41235");
+
+    // 0600, for the same reason the token file is: this is not for other apps.
+    if (process.platform !== "win32") {
+      assert.equal(fs.statSync(adbStatePath()).mode & 0o777, 0o600);
+    }
+    // Written through a temp file and renamed, so a kill mid-write cannot leave
+    // a half-document that fails to parse at every boot from then on.
+    assert.equal(fs.existsSync(`${adbStatePath()}.tmp`), false, "no temp file left behind");
+
+    // Garbage is refused rather than stored and then fed to adb later.
+    for (const bad of ["", "not-an-address", "192.168.1.5", "1.2.3.4:70000", "$(reboot)", "8.8.8.8:22; rm -rf /"]) {
+      assert.equal(saveAdbAddress(bad), false, `saved ${JSON.stringify(bad)}`);
+    }
+    assert.equal(readAdbAddress(), "192.168.1.5:41235", "a rejected write must not clobber a good value");
+
+    // The file sits on disk between two runs, so "we wrote it once" is not a
+    // reason to trust it. A hand-edited value has to be re-checked on read.
+    fs.writeFileSync(adbStatePath(), JSON.stringify({ address: "127.0.0.1:5555; cat /etc/passwd" }));
+    assert.equal(readAdbAddress(), null, "an edited address must not come back out");
+    fs.writeFileSync(adbStatePath(), "{ this is not json");
+    assert.equal(readAdbAddress(), null, "a corrupt file reads as nothing saved");
+
+    assert.equal(forgetAdbAddress(), true);
+    assert.equal(fs.existsSync(adbStatePath()), false);
+    assert.equal(readAdbAddress(), null);
+  } finally {
+    if (original === undefined) delete process.env.TCA_HOME;
+    else process.env.TCA_HOME = original;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("adbReconnect says there is nothing saved rather than calling adb", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tca-adb-none-"));
+  const original = process.env.TCA_HOME;
+  process.env.TCA_HOME = home;
+  try {
+    const res = await adbReconnect();
+    assert.equal(res.ok, false);
+    assert.equal(res.address, null);
+    // A distinct key, so startup can tell "never paired" from "the port moved"
+    // and only ask for a pairing code in the first case.
+    assert.equal(res.errKey, "priv.err.no_saved_address");
+    assert.ok(DICT.vi[res.errKey] && DICT.en[res.errKey], "the error needs both translations");
+  } finally {
+    if (original === undefined) delete process.env.TCA_HOME;
+    else process.env.TCA_HOME = original;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("startup asks about privileges, but never when there is no terminal", () => {
+  // The prompt has to be gated on a TTY. Termux:Boot, a runit service, and a
+  // piped start all have no keyboard, and a blocking question there would mean
+  // the daemon simply never comes up - the worst possible failure for a thing
+  // whose whole job is to be running when you open the browser.
+  const js = fs.readFileSync(path.join(HERE, "..", "src", "cli.js"), "utf8");
+  assert.match(js, /async function setupPrivileges\(\)/, "there should be a startup privilege step");
+  assert.match(js, /process\.stdin\.isTTY/, "the prompt must be gated on a terminal");
+
+  // It runs before serve(), because a URL printed first invites the user to
+  // start a task that Android is about to kill.
+  const setup = js.indexOf("await setupPrivileges()");
+  const listen = js.indexOf("await serve({ port })");
+  assert.ok(setup !== -1 && listen !== -1 && setup < listen, "setupPrivileges must run before serve");
+
+  // The reboot path: try the saved address before asking for anything.
+  const reconnect = js.indexOf("await adbReconnect()");
+  const question = js.indexOf("boot.setupNow");
+  assert.ok(reconnect !== -1 && question !== -1 && reconnect < question, "reconnect before prompting");
+
+  // adb-setup sets a failing exit code on a failed attempt; the daemon keeps
+  // running afterwards, so that must not leak into `nhatnam`'s exit status.
+  assert.match(js, /process\.exitCode = 0/, "a failed pairing must not fail the whole run");
 });

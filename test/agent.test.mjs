@@ -74,7 +74,6 @@ function writeConfig(providerPort, extra = {}) {
       active: "fake",
       workspace: WORKSPACE,
       autoApproveCommands: false,
-      maxSteps: 10,
       providers: {
         fake: {
           kind: "openai",
@@ -868,4 +867,153 @@ test("a write is checked, and the checker output reaches the model", async (t) =
   const back = fake.requests[1].messages.at(-1).content;
   assert.match(back, /checked after this change/);
   assert.match(back, /node --check/);
+});
+
+test("a turn is not capped by a step count, and a real loop still stops it", async (t) => {
+  // There is no step budget any more: a task that needs thirty rounds gets thirty.
+  // What stops a runaway is repetition - the same calls, the same arguments, the
+  // same results - because that is the shape a stuck agent actually has, and a
+  // number picked in advance cannot tell the two apart.
+  //
+  // This fake asks for the identical read_file for ever. Without the detector the
+  // test would hang, which is exactly the failure being guarded against.
+  const repeat = [
+    toolChunk("call_x", "read_file", JSON.stringify({ path: "loop-me.txt" })),
+    finish("tool_calls"),
+  ];
+  const fake = fakeProvider([repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat]);
+  const providerPort = await listen(fake.server);
+  writeConfig(providerPort);
+  fs.writeFileSync(path.join(WORKSPACE, "loop-me.txt"), "same every time\n");
+
+  const { server, port, token } = await serve({ port: 0, quiet: true });
+  t.after(() => {
+    server.close();
+    fake.server.close();
+  });
+
+  const { body: session } = await api(port, token, "POST", "/api/sessions");
+  const eventsPromise = collect(port, token, session.id);
+  await new Promise((r) => setTimeout(r, 100));
+  await api(port, token, "POST", `/api/sessions/${session.id}/message`, { text: "go in circles" });
+
+  const events = await eventsPromise;
+  const err = events.find((e) => e.type === "error");
+  assert.ok(err, `expected the loop to be cut short, got ${events.map((e) => e.type)}`);
+  assert.match(err.message, /no progress|repeated/i);
+  assert.match(err.message, /read_file/, "it should name what it was repeating");
+
+  // Three identical batches is the trigger, so it must not have run more than that
+  // - the whole point is that it stops early, not that it stops eventually.
+  const calls = events.filter((e) => e.type === "tool_end").length;
+  assert.equal(calls, 3, `stopped after ${calls} identical calls, expected 3`);
+});
+
+test("changing arguments is progress, so a long turn is left alone", async (t) => {
+  // The same tool over and over is fine as long as it is doing different work.
+  // Four reads of four different files must not be mistaken for a loop.
+  const turns = ["a", "b", "c", "d"].map((n) => [
+    toolChunk(`call_${n}`, "read_file", JSON.stringify({ path: `many-${n}.txt` })),
+    finish("tool_calls"),
+  ]);
+  turns.push([textChunk("Read all four."), finish("stop")]);
+
+  const fake = fakeProvider(turns);
+  const providerPort = await listen(fake.server);
+  writeConfig(providerPort);
+  for (const n of ["a", "b", "c", "d"]) {
+    fs.writeFileSync(path.join(WORKSPACE, `many-${n}.txt`), `file ${n}\n`);
+  }
+
+  const { server, port, token } = await serve({ port: 0, quiet: true });
+  t.after(() => {
+    server.close();
+    fake.server.close();
+  });
+
+  const { body: session } = await api(port, token, "POST", "/api/sessions");
+  const eventsPromise = collect(port, token, session.id);
+  await new Promise((r) => setTimeout(r, 100));
+  await api(port, token, "POST", `/api/sessions/${session.id}/message`, { text: "read four files" });
+
+  const events = await eventsPromise;
+  assert.equal(events.filter((e) => e.type === "error").length, 0, "no false positive");
+  assert.equal(events.filter((e) => e.type === "tool_end").length, 4);
+  assert.equal(events.at(-1).type, "done");
+});
+
+test("a tool that fails the same way for ever is a loop too", async (t) => {
+  // The hole the step limit used to cover. The first version of the detector only
+  // fired when every result was ok, on the theory that a failure would make the
+  // model change course. When it does not, there is nothing left to stop it: no
+  // budget, no cap, just the same error until the credit runs out.
+  //
+  // Reading a file that does not exist fails identically every time, so this is
+  // the same shape as the success case and has to end the same way.
+  const repeat = [
+    toolChunk("call_missing", "read_file", JSON.stringify({ path: "not-here-at-all.txt" })),
+    finish("tool_calls"),
+  ];
+  const fake = fakeProvider([repeat, repeat, repeat, repeat, repeat, repeat]);
+  const providerPort = await listen(fake.server);
+  writeConfig(providerPort);
+
+  const { server, port, token } = await serve({ port: 0, quiet: true });
+  t.after(() => {
+    server.close();
+    fake.server.close();
+  });
+
+  const { body: session } = await api(port, token, "POST", "/api/sessions");
+  const eventsPromise = collect(port, token, session.id);
+  await new Promise((r) => setTimeout(r, 100));
+  await api(port, token, "POST", `/api/sessions/${session.id}/message`, { text: "read a file that is not there" });
+
+  const events = await eventsPromise;
+  const failed = events.filter((e) => e.type === "tool_end" && !e.ok);
+  assert.ok(failed.length, "the read should have failed");
+
+  const err = events.find((e) => e.type === "error");
+  assert.ok(err, `expected the failing loop to be cut short, got ${events.map((e) => e.type)}`);
+  assert.match(err.message, /no progress|repeated/i);
+  assert.equal(failed.length, 3, `stopped after ${failed.length} identical failures, expected 3`);
+});
+
+test("the same call returning something different is not a loop", async (t) => {
+  // The other half of why results are in the fingerprint. Re-running the same
+  // command to watch for a change - a build, a test run, a file being written by
+  // something else - is legitimate, and looks identical from the call side alone.
+  const watch = [
+    toolChunk("call_watch", "read_file", JSON.stringify({ path: "changing.txt" })),
+    finish("tool_calls"),
+  ];
+  const fake = fakeProvider([watch, watch, watch, watch, [textChunk("It changed."), finish("stop")]]);
+  const providerPort = await listen(fake.server);
+  writeConfig(providerPort);
+
+  const target = path.join(WORKSPACE, "changing.txt");
+  fs.writeFileSync(target, "version 0\n");
+
+  const { server, port, token } = await serve({ port: 0, quiet: true });
+  t.after(() => {
+    server.close();
+    fake.server.close();
+  });
+
+  // Rewrite the file between reads, so the identical call keeps returning
+  // something new. That is progress, and must not be cut off.
+  let version = 0;
+  const bump = setInterval(() => fs.writeFileSync(target, `version ${++version}\n`), 20);
+  t.after(() => clearInterval(bump));
+
+  const { body: session } = await api(port, token, "POST", "/api/sessions");
+  const eventsPromise = collect(port, token, session.id);
+  await new Promise((r) => setTimeout(r, 100));
+  await api(port, token, "POST", `/api/sessions/${session.id}/message`, { text: "watch the file" });
+
+  const events = await eventsPromise;
+  const errors = events.filter((e) => e.type === "error");
+  assert.deepEqual(errors, [], "a changing result is progress, not a loop");
+  assert.equal(events.filter((e) => e.type === "tool_end").length, 4);
+  assert.equal(events.at(-1).type, "done");
 });

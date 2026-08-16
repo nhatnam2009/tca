@@ -141,7 +141,6 @@ function redrawDynamicText() {
     renderCatalogInfo();
     setMode(mode, false);
     renderMeter();
-    if (powerData) renderPower(powerData);
   } catch {
     // A redraw is cosmetic; never let it break a language switch.
   }
@@ -821,7 +820,6 @@ let stick = true; // auto-scroll only while the user sits at the bottom
 const approvals = new Map();
 /** Last /api/capabilities payload, kept so a language switch can repaint the
  *  Power panel without a refetch. */
-let powerData = null;
 
 /** The plan card, replaced in place rather than appended on every update. */
 let todoCard = null;
@@ -1295,11 +1293,6 @@ function handleEvent(ev) {
   if (!ev || typeof ev.type !== "string") return;
   if (streaming) setStatus(BUSY()); // any event means we are connected again
   switch (ev.type) {
-    case "step":
-      // Only shown once it is far enough in to be worth knowing: a step counter
-      // that reads "1 of 40" on every message is noise.
-      if (streaming && ev.n >= 3) setStatus(t("chat.step", { n: ev.n, of: ev.of }));
-      break;
     case "text_delta":
       if (!streaming) setStreaming(true); // e.g. page reloaded mid-turn
       appendDelta(ev.text || "", ev);
@@ -1667,7 +1660,6 @@ function fillSettings() {
   $("cfg-autoapprove-edits").checked = cfg.autoApproveEdits !== false;
   $("cfg-verify-edits").checked = cfg.verifyEdits !== false;
   $("cfg-lang").value = normaliseLang(cfg.lang || lang);
-  $("cfg-maxsteps").value = cfg.maxSteps ?? 40;
   $("cfg-instructions").value = cfg.instructions || "";
   $("cfg-deny").value = (cfg.denyCommands || []).join("\n");
   fillProvider();
@@ -1911,7 +1903,6 @@ function readSettings() {
   cfg.autoApproveEdits = $("cfg-autoapprove-edits").checked;
   cfg.verifyEdits = $("cfg-verify-edits").checked;
   cfg.lang = normaliseLang($("cfg-lang").value);
-  cfg.maxSteps = Number($("cfg-maxsteps").value) || 40;
   cfg.instructions = $("cfg-instructions").value;
   cfg.denyCommands = $("cfg-deny").value.split("\n").map((s) => s.trim()).filter(Boolean);
 }
@@ -2427,7 +2418,6 @@ async function wizardFinish() {
  */
 const TABS = [
   { name: "chat", tab: "tab-chat", panel: "panel-chat" },
-  { name: "power", tab: "tab-power", panel: "panel-power" },
   { name: "settings", tab: "tab-settings", panel: "panel-settings" },
 ];
 
@@ -2450,392 +2440,8 @@ function switchTab(name) {
     b.classList.toggle("active", on);
   }
   if (target === "chat") scrollToBottom(true);
-  else if (target === "power") loadPower().catch(fail);
   else if (!settingsLoaded) loadSettings(false).catch(fail);
 }
-
-/* -------------------------------------------------------------------- power */
-
-/**
- * The Power panel: what the agent could do on this device and what is missing.
- * Everything comes from GET /api/capabilities; this file decides only how it
- * looks. The full design (one-tap install, the privilege wizard) lands next; for
- * now it lists the same data the terminal `tca power` prints.
- */
-async function loadPower() {
-  const host = $("power-body");
-  host.textContent = "";
-  host.appendChild(el("p", "muted small", t("ui.checking")));
-  try {
-    powerData = await api(`/api/capabilities?lang=${encodeURIComponent(lang)}`);
-  } catch (err) {
-    powerData = null;
-    host.textContent = "";
-    host.appendChild(el("p", "warn small", err.message));
-    return;
-  }
-  renderPower(powerData);
-}
-
-/**
- * The Power panel.
- *
- * It is not a package store. install.sh already installed everything cheap and
- * useful, so the foundation group is a health line rather than a row of buttons -
- * it only becomes actionable when something is genuinely missing, and then it is a
- * repair, not a choice. Android privileges are handled by `tca serve` at startup
- * and shown here read-only, because pairing ADB happens in the Android settings
- * app and a wizard in the browser could only ever be a worse copy of the terminal
- * flow. What is left is the short list of things only the user can do, and the
- * heavy optional extras, folded away.
- */
-function renderPower(data) {
-  const host = $("power-body");
-  host.textContent = "";
-  if (!data) return;
-
-  host.appendChild(scoreCard(data.score));
-  if (data.termux && data.privilege) host.appendChild(privilegeStatus(data.privilege));
-
-  const byTier = new Map(data.groups.map((g) => [g.tier, g]));
-  // Order matters: what needs you first, then whether the foundation is intact,
-  // then the things that are nobody's problem until you want them.
-  for (const tier of ["device", "core", "optional"]) {
-    const group = byTier.get(tier);
-    if (group) host.appendChild(capabilityGroup(group));
-  }
-  for (const group of data.groups) {
-    if (!["device", "core", "optional"].includes(group.tier)) host.appendChild(capabilityGroup(group));
-  }
-
-  if (!data.termux) host.appendChild(el("p", "muted small", t("ui.notTermux")));
-}
-
-function scoreCard(score) {
-  const head = el("section", "power-score");
-  head.append(el("p", "power-score-label", t("status.score")), el("p", "power-score-value", `${score.percent}%`));
-  const bar = el("div", "power-bar");
-  bar.setAttribute("role", "img");
-  bar.setAttribute("aria-label", `${t("status.score")}: ${score.percent}%`);
-  const fill = el("span", "power-bar-fill");
-  fill.style.width = `${score.percent}%`;
-  bar.appendChild(fill);
-  head.appendChild(bar);
-  return head;
-}
-
-/**
- * Privileges, read-only.
- *
- * Deliberately not a wizard. Granting ADB means leaving the browser for the
- * Android settings app and reading a pairing code off it; `tca adb-setup` in the
- * terminal does that better, and `tca serve` retries in the background so the
- * moment you grant it from anywhere, it applies itself. All this needs to do is
- * say whether it worked.
- */
-function privilegeStatus(priv) {
-  const section = el("section", "power-group power-priv");
-  section.appendChild(el("h2", "power-group-title", t("power.privSection")));
-
-  const card = el("article", `power-item ${priv.kind ? "good" : "bad"}`);
-  card.append(el("p", "power-item-title", priv.label), el("p", "power-item-why muted small", priv.detail));
-  if (priv.phantomLabel) card.appendChild(el("p", "power-item-meta muted small", priv.phantomLabel));
-  if (!priv.kind) {
-    card.append(
-      el("p", "power-item-why muted small", t("cap.privilege.why")),
-      el("p", "power-item-fix small", "tca adb-setup"),
-      el("p", "muted small", t("priv.handledByCli")),
-    );
-  } else if (priv.kind === "adb") {
-    card.appendChild(el("p", "muted small", t("power.rebootWarn")));
-  }
-  section.appendChild(card);
-  return section;
-}
-
-function capabilityGroup(group) {
-  const missing = group.items.filter((i) => i.ok === false);
-  const fine = group.items.filter((i) => i.ok !== false);
-
-  const section = el("section", "power-group");
-  section.append(el("h2", "power-group-title", group.title), el("p", "muted small", group.hint));
-
-  // The foundation is install.sh's job. Intact, it is one line; broken, it is one
-  // button that fixes the lot rather than a row of identical taps.
-  if (group.tier === "core") {
-    if (!missing.length) {
-      const okCard = el("article", "power-item good");
-      okCard.append(
-        el("p", "power-item-title", `\u2713 ${t("power.coreOk")}`),
-        el("p", "power-item-why muted small", t("power.coreOkNote", { n: fine.length })),
-      );
-      section.append(okCard, foldedList(fine));
-      return section;
-    }
-    const repair = el("article", "power-item bad");
-    repair.append(
-      el("p", "power-item-title", t("power.repair", { n: missing.length })),
-      el("p", "power-item-why muted small", t("power.repairNote", { n: missing.length })),
-      el("p", "power-item-meta muted small", missing.map((m) => m.title).join(" \u00b7 ")),
-    );
-    const installable = missing.filter((m) => m.installable);
-    if (installable.length) repair.appendChild(batchButton(installable, t("power.repair", { n: installable.length })));
-    for (const item of missing.filter((m) => !m.installable)) {
-      repair.appendChild(el("p", "power-item-fix small", `${item.title}: ${item.fix}`));
-    }
-    section.append(repair, foldedList(fine));
-    return section;
-  }
-
-  for (const item of missing) section.appendChild(capabilityCard(item));
-  if (!missing.length) section.appendChild(el("p", "power-ok-note small", t("power.allGood")));
-
-  // One button for the whole group beats the same tap five times over.
-  const installable = missing.filter((i) => i.installable);
-  if (installable.length > 1) section.appendChild(batchButton(installable));
-
-  section.appendChild(foldedList(fine));
-  return section;
-}
-
-/** Everything already working, as one collapsed line. */
-function foldedList(items) {
-  if (!items.length) return el("span");
-  const done = el("details", "power-done");
-  const sum = el("summary");
-  sum.append(el("span", "power-done-count", `\u2713 ${items.length}`), el("span", null, t("common.installed")));
-  done.appendChild(sum);
-  const list = el("ul", "power-done-list");
-  for (const item of items) {
-    const li = document.createElement("li");
-    // ok === null means "cannot be judged here", which is not the same as
-    // working; say so rather than implying a tick.
-    const mark = item.ok === true ? "\u2713" : "\u2013";
-    const state = item.ok === true ? t("common.installed") : t("common.unknown");
-    li.className = item.ok === true ? "ok" : "unknown";
-    li.append(markGlyph(mark, state));
-    li.appendChild(document.createTextNode(item.detail ? `${item.title} \u2014 ${item.detail}` : item.title));
-    // Half of "start on boot" is an app we cannot see from inside Termux, so a
-    // tick here would be overstating what was actually verified. It is also the
-    // one folded item worth being able to switch back off from here.
-    if (item.id === "boot" && item.ok === true) {
-      li.appendChild(el("span", "power-caveat", t("boot.appNote")));
-      li.appendChild(
-        actionButton(t("boot.remove"), "btn link power-undo", async () => {
-          await api("/api/privilege/boot-script", { method: "POST", body: { remove: true } });
-          toast(t("boot.removed"));
-          await loadPower();
-        }),
-      );
-    }
-    list.appendChild(li);
-  }
-  done.appendChild(list);
-  return done;
-}
-
-/** A glyph that carries its meaning as text for a screen reader, not as colour. */
-function markGlyph(glyph, label) {
-  const span = el("span", "mark", glyph);
-  span.setAttribute("role", "img");
-  span.setAttribute("aria-label", label);
-  return span;
-}
-
-/** A button that disables itself while its work runs, and reports a failure. */
-function actionButton(label, cls, onClick) {
-  const btn = el("button", cls, label);
-  btn.type = "button";
-  btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    try {
-      await onClick();
-    } catch (err) {
-      fail(err);
-    }
-    btn.disabled = false;
-  });
-  return btn;
-}
-
-/** One missing capability, with an install button when there is a package for it. */
-function capabilityCard(item) {
-  const card = el("article", "power-item bad");
-  card.setAttribute("role", "group");
-  card.setAttribute("aria-label", `${item.title} \u2014 ${t("common.missing")}`);
-  card.append(el("p", "power-item-title", item.title), el("p", "power-item-why muted small", item.why));
-
-  const meta = [
-    item.packages.length ? t("common.package", { name: item.packages.join(" ") }) : "",
-    item.sizeMb ? t("common.size", { n: item.sizeMb }) : "",
-  ].filter(Boolean).join(" \u00b7 ");
-  if (meta) card.appendChild(el("p", "power-item-meta muted small", meta));
-
-  if (item.id === "boot") {
-    card.appendChild(el("p", "power-item-fix small", item.fix));
-    card.appendChild(
-      actionButton(t("boot.install"), "btn primary block", async () => {
-        await api("/api/privilege/boot-script", { method: "POST", body: {} });
-        toast(t("boot.installed"));
-        await loadPower();
-      }),
-    );
-    return card;
-  }
-  // `privilege` has its own section above; the rest are steps to follow by hand.
-  if (!item.installable) {
-    if (item.id !== "privilege") card.appendChild(el("p", "power-item-fix small", item.fix));
-    return card;
-  }
-
-  card.appendChild(batchButton([item], t("common.install")));
-  return card;
-}
-
-/* ------------------------------------------------- installing, with progress */
-
-/** True while an install is streaming, so a second tap cannot start another. */
-let installing = false;
-
-/**
- * A button that installs a whole list in one go.
- *
- * Total size goes in the label and anything large is confirmed first: 400 MB over
- * mobile data is not something to discover afterwards.
- */
-function batchButton(items, label) {
-  const mb = items.reduce((n, i) => n + (i.sizeMb || 0), 0);
-  const text = label || t("power.installAll", { n: items.length, mb });
-  const btn = el("button", "btn primary block", text);
-  btn.type = "button";
-  btn.addEventListener("click", () => {
-    if (installing) return toast(t("power.busy"), "warn");
-    if (mb >= 50 && !confirm(t("power.confirmSize", { mb }))) return;
-    runInstall(items, btn);
-  });
-  return btn;
-}
-
-/**
- * Stream an install and show what it is doing.
- *
- * apt takes tens of seconds to minutes on a phone. The server sends
- * newline-delimited JSON as it goes, so this can show which item, which phase, and
- * the last line of output - instead of a frozen spinner, which looks exactly like
- * a hang.
- */
-async function runInstall(items, btn) {
-  installing = true;
-  const card = installProgressCard(items);
-  btn.replaceWith(card);
-
-  try {
-    const res = await fetch("/api/capabilities/install", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: items.map((i) => i.id) }),
-    });
-    if (res.status === 409) throw new Error(t("power.busy"));
-    if (!res.ok || !res.body) throw new Error(`install failed (${res.status})`);
-
-    // NDJSON: one event per line, and a line can arrive split across chunks.
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          card.onEvent(JSON.parse(line));
-        } catch {
-          // A malformed line is not worth losing the rest of the stream over.
-        }
-      }
-    }
-  } catch (err) {
-    card.onEvent({ type: "done", ok: false, error: err.message });
-  } finally {
-    installing = false;
-  }
-}
-
-/**
- * The progress card. Returns the element with an onEvent hook attached, so the
- * streaming loop stays about reading and this stays about showing.
- */
-function installProgressCard(items) {
-  const card = el("article", "power-item install-progress");
-  card.setAttribute("role", "status");
-  card.setAttribute("aria-live", "polite");
-
-  const title = el("p", "power-item-title", t("power.progressTitle"));
-  const which = el("p", "install-which", t("power.progressItem", { n: 1, total: items.length, title: items[0].title }));
-  const phase = el("p", "install-phase muted small", t("power.phase.start"));
-  const bar = el("div", "power-bar");
-  const fill = el("span", "power-bar-fill");
-  fill.style.width = "0%";
-  bar.appendChild(fill);
-  const lastLine = el("p", "install-log-line mono");
-  const log = el("details", "power-log");
-  log.appendChild(el("summary", null, t("power.installLog")));
-  const logPre = pre("");
-  log.appendChild(logPre);
-
-  card.append(title, which, bar, phase, lastLine, log);
-
-  const lines = [];
-  let finished = 0;
-  card.onEvent = (ev) => {
-    if (ev.type === "start") {
-      const item = items.find((i) => i.id === ev.id);
-      which.textContent = t("power.progressItem", {
-        n: ev.index + 1,
-        total: ev.total,
-        title: item ? item.title : ev.id,
-      });
-      phase.textContent = t("power.phase.start");
-    } else if (ev.type === "log") {
-      lines.push(ev.line);
-      lastLine.textContent = ev.line;
-      if (ev.phase) phase.textContent = t(`power.phase.${ev.phase}`);
-      // Keep the tail only: the full apt log of a big install is megabytes.
-      if (lines.length > 400) lines.splice(0, lines.length - 400);
-      logPre.textContent = lines.join("\n");
-    } else if (ev.type === "item_done") {
-      finished = ev.index + 1;
-      fill.style.width = `${Math.round((finished / ev.total) * 100)}%`;
-    } else if (ev.type === "done") {
-      fill.style.width = "100%";
-      lastLine.textContent = "";
-      if (ev.ok) {
-        card.classList.add("good");
-        title.textContent = t("power.installedN", { n: (ev.installed || []).length });
-        phase.textContent = "";
-        toast(t("power.installedN", { n: (ev.installed || []).length }));
-      } else {
-        card.classList.add("bad");
-        const stuck = items.find((i) => (ev.failed || []).includes(i.id));
-        title.textContent = t("power.installFailed");
-        phase.textContent = ev.error || (stuck ? t("power.failedAt", { title: stuck.title }) : "");
-        log.open = true;
-      }
-      // Repaint from the payload the server already computed; no extra request.
-      if (ev.capabilities) {
-        powerData = ev.capabilities;
-        setTimeout(() => renderPower(powerData), ev.ok ? 900 : 4000);
-      } else {
-        setTimeout(() => loadPower().catch(() => {}), 900);
-      }
-    }
-  };
-  return card;
-}
-
 
 /* ------------------------------------------------------------- state / boot */
 
@@ -3021,9 +2627,7 @@ function wire() {
 
   // ---- tabs (tap, plus left/right arrows for keyboards)
   $("tab-chat").addEventListener("click", () => switchTab("chat"));
-  $("tab-power").addEventListener("click", () => switchTab("power"));
   $("tab-settings").addEventListener("click", () => switchTab("settings"));
-  $("btn-recheck-power").addEventListener("click", () => loadPower().catch(fail));
   for (const [i, entry] of TABS.entries()) {
     $(entry.tab).addEventListener("keydown", (e) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;

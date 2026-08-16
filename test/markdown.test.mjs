@@ -472,18 +472,26 @@ test("applyI18n fills text, placeholders and aria-labels, and skips unknown keys
   assert.equal(ph.getAttribute("placeholder"), DICT.en["chat.placeholder"]);
 });
 
-test("the three tabs are declared once and switchTab is not hardcoded to two", () => {
+test("the tabs are declared once and switchTab is not hardcoded", () => {
   // switchTab used to resolve anything that was not "chat" to settings, so a
-  // third tab was impossible without rewriting it.
+  // third tab was impossible without rewriting it. It stays table-driven even now
+  // that there are two again, because that is what made removing one a one-line
+  // change instead of a rewrite.
   const js = fs.readFileSync(path.join(SRC, "web", "app.js"), "utf8");
   assert.match(js, /const TABS = \[/, "tabs should come from a table");
-  for (const name of ["chat", "power", "settings"]) {
+  for (const name of ["chat", "settings"]) {
     assert.ok(js.includes(`name: "${name}"`), `TABS is missing ${name}`);
   }
+
   const html = fs.readFileSync(path.join(SRC, "web", "index.html"), "utf8");
-  for (const id of ["tab-power", "panel-power"]) {
-    assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
+  // The Power tab is gone: everything it installed is installed by install.sh in
+  // one pass, and the diagnostics it showed live in `tca doctor`. Nothing may be
+  // left pointing at it, in either direction.
+  for (const dead of ["tab-power", "panel-power", "power-body", "btn-recheck-power"]) {
+    assert.ok(!html.includes(`id="${dead}"`), `index.html still has #${dead}`);
+    assert.ok(!js.includes(dead), `app.js still references ${dead}`);
   }
+
   // aria-controls must point at something that exists, or the tablist lies to
   // assistive tech.
   for (const m of html.matchAll(/aria-controls="([^"]+)"/g)) {
@@ -523,7 +531,6 @@ test("no translation is defined that nothing uses", () => {
     computed.add(`priv.method.${m}.title`);
     computed.add(`priv.method.${m}.desc`);
   }
-  for (const phase of ["download", "unpack", "configure", "start"]) computed.add(`power.phase.${phase}`);
   for (const u of UNLOCKS) computed.add(u.labelKey);
 
   const unused = Object.keys(DICT.vi)
@@ -547,263 +554,6 @@ test("the dead Android-status markup and CSS are gone with it", () => {
     assert.ok(!css.includes(rule), `style.css still has dead rule ${rule}`);
   }
 });
-
-test("every class the Power panel builds has a rule in the stylesheet", () => {
-  // These elements are created in JS, so a typo is invisible: the element renders
-  // unstyled and looks merely ugly rather than broken.
-  const css = fs.readFileSync(path.join(SRC, "web", "style.css"), "utf8");
-  const classes = [
-    "power-score", "power-score-label", "power-score-value", "power-bar", "power-bar-fill",
-    "power-group", "power-group-title", "power-item", "power-item-title", "power-item-why",
-    "power-item-meta", "power-item-fix", "power-item-result", "power-ok-note", "power-log",
-    "power-done", "power-done-count", "power-done-list",
-    "install-progress", "install-which", "install-phase", "install-log-line",
-    "todo", "todo-head", "todo-title", "todo-count", "todo-bar", "todo-bar-fill",
-    "todo-list", "todo-item", "todo-mark", "todo-text",
-    "power-caveat", "power-undo",
-  ];
-  const missing = classes.filter((c) => !css.includes(`.${c}`));
-  assert.deepEqual(missing, [], `style.css has no rule for: ${missing.join(", ")}`);
-});
-
-/* -------------------------------------------------------------- power panel */
-
-/** A capabilities payload shaped like the real one, with one gap per tier. */
-function powerPayload({ termux = true, privKind = null } = {}) {
-  const item = (id, ok, extra = {}) => ({
-    id,
-    tier: extra.tier || "device",
-    weight: 2,
-    ok,
-    detail: extra.detail || "",
-    params: {},
-    packages: extra.packages || [],
-    sizeMb: extra.sizeMb ?? null,
-    installable: Boolean(extra.packages && extra.packages.length && termux),
-    titleKey: `cap.${id}.title`,
-    whyKey: `cap.${id}.why`,
-    fixKey: `cap.${id}.fix`,
-    title: `title-${id}`,
-    why: `why-${id}`,
-    fix: `fix-${id}`,
-  });
-
-  return {
-    lang: "en",
-    termux,
-    score: { have: 6, total: 10, percent: 60 },
-    privilege: {
-      kind: privKind,
-      labelKey: `priv.${privKind ?? "none"}.label`,
-      detailKey: `priv.${privKind ?? "none"}.detail`,
-      label: `label-${privKind ?? "none"}`,
-      detail: `detail-${privKind ?? "none"}`,
-      note: "",
-      root: { available: false, note: "su not on PATH" },
-      rish: { available: false, note: "missing: rish", files: { script: false, dex: false } },
-      adb: { installed: true, connected: false, note: "" },
-      phantomLimit: null,
-      phantomLabel: "phantom-unknown",
-    },
-    envKeys: { names: [], label: "no keys" },
-    groups: [
-      {
-        tier: "core",
-        titleKey: "tier.core",
-        hintKey: "tier.core.hint",
-        title: "Foundation",
-        hint: "hint-core",
-        items: [item("node", true, { tier: "core", detail: "v22" }), item("git", true, { tier: "core" })],
-      },
-      {
-        tier: "device",
-        titleKey: "tier.device",
-        hintKey: "tier.device.hint",
-        title: "Needs you",
-        hint: "hint-device",
-        items: [
-          item("notifications", false, { packages: ["termux-api"], sizeMb: 1 }),
-          item("provider", false, {}),
-          item("storage", null),
-        ],
-      },
-    ],
-  };
-}
-
-test("the Power panel shows the score, the gaps, and folds away what works", () => {
-  app.renderPower(powerPayload({ termux: true }));
-  const root = shapeOf("power-body");
-
-  // Score card first: the one number that says whether you are done.
-  assert.equal(root.children[0].class, "power-score");
-  assert.match(textOf(root.children[0]), /60%/);
-
-  const tags = tags2(root);
-  assert.ok(tags.includes("article"), "a missing capability should render a card");
-  assert.ok(tags.includes("details"), "the working ones should be folded into a details");
-
-  // The fold must be summarised, not expanded: two working items in the tiers.
-  const done = collect(root, (n) => n.class === "power-done");
-  assert.ok(done.length >= 1);
-  assert.match(textOf(done[0]), /\u2713/);
-});
-
-test("privileges are shown read-only, and point at the terminal", () => {
-  // There used to be a four-route wizard here. It was the wrong shape: granting
-  // ADB means leaving the browser for the Android settings app, so `tca adb-setup`
-  // does it better and `tca serve` retries in the background. The panel's only job
-  // now is to say whether it worked.
-  app.renderPower(powerPayload({ termux: true, privKind: null }));
-  let root = shapeOf("power-body");
-
-  const priv = collect(root, (n) => n.class === "power-group power-priv")[0];
-  assert.ok(priv, "the privilege section should be present");
-  assert.equal(collect(priv, (n) => n.tag === "button").length, 0, "no wizard, no buttons");
-  assert.match(textOf(priv), /tca adb-setup/, "it has to say what to run");
-  assert.match(textOf(priv), new RegExp(DICT.en["priv.handledByCli"].slice(0, 30)));
-
-  // It is the one gap that silently breaks long tasks, so it sits above the
-  // capability groups rather than below a list of optional packages.
-  const sections = collect(root, (n) => n.class === "power-group" || n.class === "power-group power-priv");
-  assert.equal(sections[0].class, "power-group power-priv");
-
-  // Working: the label, and still no buttons.
-  app.renderPower(powerPayload({ termux: true, privKind: "rish" }));
-  root = shapeOf("power-body");
-  const ok = collect(root, (n) => n.class === "power-group power-priv")[0];
-  assert.match(textOf(ok), /label-rish/);
-  assert.equal(collect(ok, (n) => n.tag === "button").length, 0);
-  assert.ok(!textOf(ok).includes("tca adb-setup"), "nothing to run once it works");
-});
-
-test("the foundation group is a health line, not a row of install buttons", () => {
-  // install.sh already installed all of this. Offering to install it again, one
-  // tap at a time, was the complaint that got this redesigned.
-  app.renderPower(powerPayload({ termux: true }));
-  const root = shapeOf("power-body");
-  const groups = collect(root, (n) => n.class === "power-group");
-  const core = groups.find((g) => textOf(g).includes("Foundation"));
-  assert.ok(core, "the foundation group should be on screen");
-
-  assert.match(textOf(core), new RegExp(DICT.en["power.coreOk"]));
-  assert.equal(collect(core, (n) => n.tag === "button").length, 0, "intact means nothing to tap");
-  assert.ok(collect(core, (n) => n.class === "power-done").length === 1, "it folds to one line");
-});
-
-test("a broken foundation offers one repair, not one button per package", () => {
-  const payload = powerPayload({ termux: true });
-  const core = payload.groups.find((g) => g.tier === "core");
-  for (const id of ["fast_search", "git", "jq"]) {
-    core.items.push({
-      id,
-      tier: "core",
-      weight: 2,
-      ok: false,
-      detail: "",
-      params: {},
-      packages: [id === "fast_search" ? "ripgrep" : id],
-      sizeMb: 4,
-      installable: true,
-      titleKey: `cap.${id}.title`,
-      whyKey: `cap.${id}.why`,
-      fixKey: `cap.${id}.fix`,
-      title: `title-${id}`,
-      why: `why-${id}`,
-      fix: `fix-${id}`,
-    });
-  }
-
-  app.renderPower(payload);
-  const root = shapeOf("power-body");
-  const group = collect(root, (n) => n.class === "power-group").find((g) => textOf(g).includes("Foundation"));
-  assert.ok(group);
-
-  const buttons = collect(group, (n) => n.tag === "button");
-  assert.equal(buttons.length, 1, "three gaps, one button");
-  assert.match(textOf(buttons[0]), /3/, "the button says how many it will fix");
-  // All three names still have to be visible, so it is clear what is being repaired.
-  for (const id of ["fast_search", "git", "jq"]) {
-    assert.ok(textOf(group).includes(`title-${id}`), `${id} should be named`);
-  }
-});
-
-test("a group with several gaps gets one Install all as well as the individual ones", () => {
-  const payload = powerPayload({ termux: true });
-  const device = payload.groups.find((g) => g.tier === "device");
-  device.items.push({
-    id: "python",
-    tier: "device",
-    weight: 2,
-    ok: false,
-    detail: "",
-    params: {},
-    packages: ["python"],
-    sizeMb: 130,
-    installable: true,
-    titleKey: "cap.python.title",
-    whyKey: "cap.python.why",
-    fixKey: "cap.python.fix",
-    title: "title-python",
-    why: "why-python",
-    fix: "fix-python",
-  });
-
-  app.renderPower(payload);
-  const root = shapeOf("power-body");
-  const group = collect(root, (n) => n.class === "power-group").find((g) => textOf(g).includes("Needs you"));
-  assert.ok(group);
-
-  const batch = collect(group, (n) => n.tag === "button").filter((b) => /Install all/i.test(textOf(b)));
-  assert.equal(batch.length, 1, "two installable gaps should share one Install all");
-  // Total size goes in the label: 131 MB over mobile data is not something to
-  // discover afterwards.
-  assert.match(textOf(batch[0]), /131 MB/);
-
-  // A capability with no package still shows its instruction rather than a dead
-  // button.
-  const cards = collect(group, (n) => n.class === "power-item bad");
-  const noPkg = cards.find((c) => textOf(c).includes("title-provider"));
-  assert.ok(noPkg);
-  assert.equal(collect(noPkg, (n) => n.tag === "button").length, 0);
-  assert.match(textOf(noPkg), /fix-provider/);
-});
-
-test("off Termux the panel says so and shows no privilege section", () => {
-  app.renderPower(powerPayload({ termux: false }));
-  const root = shapeOf("power-body");
-  assert.equal(collect(root, (n) => n.class === "power-group power-priv").length, 0);
-  assert.match(textOf(root), new RegExp(DICT.en["ui.notTermux"]));
-});
-
-/* ---------------------------------------------------- helpers for the above */
-
-function shapeOf(id) {
-  return shape(app.document.getElementById(id));
-}
-
-function tags2(node, acc = []) {
-  for (const c of node.children || []) {
-    if (c.tag) {
-      acc.push(c.tag);
-      tags2(c, acc);
-    }
-  }
-  return acc;
-}
-function collect(node, pred, acc = []) {
-  for (const c of node.children || []) {
-    if (c.tag && pred(c)) acc.push(c);
-    if (c.tag) collect(c, pred, acc);
-  }
-  return acc;
-}
-function textOf(node) {
-  if (!node) return "";
-  if (node.text) return node.text;
-  return (node.children || []).map(textOf).join(" ");
-}
-
 
 /* ------------------------------------------------------------- highlighting */
 

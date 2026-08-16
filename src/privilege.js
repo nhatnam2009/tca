@@ -26,7 +26,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 
 const DEFAULT_TIMEOUT = 12_000;
 
@@ -81,92 +81,6 @@ export function hasBinary(name) {
   } catch {
     return false;
   }
-}
-
-/**
- * Same as run(), but hands back each output line as it arrives.
- *
- * `apt-get install` on a phone takes tens of seconds to minutes. Buffering all of
- * it and returning at the end means the UI can only show a frozen spinner, which
- * is the difference between "this is working" and "this has hung". So the output
- * is streamed line by line and the caller decides what to show.
- *
- * @param {string} file
- * @param {string[]} args
- * @param {{timeout?: number, env?: Record<string,string>, cwd?: string, signal?: AbortSignal}} opts
- * @param {(line: string) => void} onLine
- * @returns {Promise<{ok: boolean, code: number|null, killed: boolean}>}
- */
-export function runStreaming(file, args, opts, onLine) {
-  return new Promise((resolve) => {
-    let child;
-    try {
-      child = spawn(file, args, {
-        env: opts.env ? { ...process.env, ...opts.env } : process.env,
-        cwd: opts.cwd,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch (err) {
-      onLine(`could not start ${file}: ${/** @type {Error} */ (err).message}`);
-      resolve({ ok: false, code: null, killed: false });
-      return;
-    }
-
-    let killed = false;
-    const timer = opts.timeout
-      ? setTimeout(() => {
-          killed = true;
-          child.kill("SIGKILL");
-        }, opts.timeout)
-      : null;
-    const onAbort = () => {
-      killed = true;
-      child.kill("SIGKILL");
-    };
-    opts.signal?.addEventListener("abort", onAbort, { once: true });
-
-    // One partial-line buffer per stream: apt writes progress without a trailing
-    // newline, and splitting a chunk blindly would emit half-lines.
-    const buffers = { out: "", err: "" };
-    const feed = (key) => (chunk) => {
-      buffers[key] += chunk;
-      const lines = buffers[key].split(/\r?\n/);
-      buffers[key] = lines.pop() ?? "";
-      for (const line of lines) if (line.trim()) onLine(line);
-    };
-    child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
-    child.stdout?.on("data", feed("out"));
-    child.stderr?.on("data", feed("err"));
-
-    const finish = (code) => {
-      if (timer) clearTimeout(timer);
-      opts.signal?.removeEventListener("abort", onAbort);
-      for (const key of ["out", "err"]) if (buffers[key].trim()) onLine(buffers[key]);
-      resolve({ ok: !killed && code === 0, code, killed });
-    };
-    child.on("error", (err) => {
-      onLine(err.message);
-      finish(null);
-    });
-    child.on("close", finish);
-  });
-}
-
-/**
- * What phase of an install a line of apt output represents.
- *
- * apt prints hundreds of lines and almost all of them are noise to someone
- * watching a phone. Three words - downloading, unpacking, configuring - say more
- * than the log does, and the log is still there underneath for when it fails.
- * @param {string} line
- * @returns {"download"|"unpack"|"configure"|null}
- */
-export function aptPhase(line) {
-  if (/^Get:|^Fetched\b|^Need to get\b/.test(line)) return "download";
-  if (/^(Unpacking|Preparing to unpack|Selecting previously)/.test(line)) return "unpack";
-  if (/^Setting up\b|^Processing triggers\b/.test(line)) return "configure";
-  return null;
 }
 
 /** Async version, used everywhere in this file so nothing blocks the daemon. */
@@ -284,7 +198,7 @@ export function rishReady() {
  * Termux:Boot runs every executable file in ~/.termux/boot/ when the device
  * starts. It is a separate APK from F-Droid, which we cannot install and cannot
  * detect from inside Termux - so the honest split is: we write the script, and
- * the Power tab tells the user to install the app that runs it.
+ * install.sh tells the user to install the app that runs it.
  *
  * Without this, Android has no boot service for an unprivileged app at all: the
  * runit service only comes up once you open Termux, because runit itself starts
@@ -310,7 +224,7 @@ export function installBootScript(cliPath) {
   const body = [
     `#!${shell}`,
     "# Written by tca. Run at device boot by the Termux:Boot app.",
-    "# Rewrite it from the Power tab, or delete it to stop starting on boot.",
+    "# Delete this file to stop starting on boot; install.sh rewrites it.",
     "termux-wake-lock 2>/dev/null || true",
     `cd ${JSON.stringify(path.dirname(path.dirname(cliPath)))}`,
     `exec node ${JSON.stringify(cliPath)} serve`,
@@ -619,5 +533,89 @@ export async function adbConnect(address) {
   if (!state.connected) {
     return { ok: false, errKey: "priv.err.connect_failed", out: `${r.out}\n${r.err}\n${state.note}`.trim() };
   }
+  // Remembered only once it is known to work, so a typo never gets retried at
+  // every boot from now on.
+  saveAdbAddress(addr);
   return { ok: true, out: r.out };
+}
+
+// ------------------------------------------------- remembering the connection
+
+/**
+ * Where the last working `adb connect` address is kept.
+ *
+ * In the private state dir, not the config file: the config lives on shared
+ * storage by default, readable by any app that has "All files access", and this
+ * is a pointer at a debugging port on the device. Same reasoning as the token.
+ *
+ * Read from the environment on each call rather than captured at import, so a
+ * test can redirect it the way it redirects HOME.
+ */
+export function adbStatePath() {
+  const dir = process.env.TCA_HOME || path.join(process.env.HOME || os.homedir(), ".tca");
+  return path.join(dir, "adb.json");
+}
+
+/**
+ * Remember an address that is known to work.
+ * @param {string} address
+ * @returns {boolean} whether it was written
+ */
+export function saveAdbAddress(address) {
+  const addr = validAddress(address);
+  if (!addr) return false;
+  const file = adbStatePath();
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // Written to a temp file and renamed, so a kill mid-write cannot leave
+    // half a JSON document that then fails to parse at every boot.
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify({ address: addr, savedAt: Date.now() }, null, 2)}\n`, { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The remembered address, or null. Validated on the way out as well as in: the
+ * file is on disk between two runs, and trusting it because we wrote it once is
+ * how a hand-edited state file ends up as an argv element.
+ * @returns {string|null}
+ */
+export function readAdbAddress() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(adbStatePath(), "utf8"));
+    return validAddress(raw?.address);
+  } catch {
+    return null;
+  }
+}
+
+export function forgetAdbAddress() {
+  try {
+    fs.rmSync(adbStatePath(), { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Try the remembered address again, for the reboot case.
+ *
+ * A reboot drops the connection but not the pairing, so reconnecting is usually
+ * all that is needed - no code to retype. It is best-effort by nature: Android
+ * assigns the wireless-debugging port fresh when the toggle is turned off and
+ * on, so a saved port can be stale, and the honest answer then is "ask again"
+ * rather than retrying forever.
+ *
+ * @returns {Promise<{ok: boolean, address: string|null, errKey?: string, out?: string}>}
+ */
+export async function adbReconnect() {
+  const addr = readAdbAddress();
+  if (!addr) return { ok: false, address: null, errKey: "priv.err.no_saved_address" };
+  const res = await adbConnect(addr);
+  return { ...res, address: addr };
 }

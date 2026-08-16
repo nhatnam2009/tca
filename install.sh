@@ -287,17 +287,34 @@ DIAG
     exit 1
   fi
 
-  # nodejs+git là bắt buộc. Còn lại làm agent mạnh hơn rõ rệt và đều rất nhẹ:
-  #   ripgrep  lo cả grep và glob, nhanh hơn nhiều lần so với đọc file bằng JS
-  #   termux-api  wake lock + thông báo khi agent xong việc
-  #   jq       nhiều lệnh agent hay dùng cần nó
+  # Mọi thứ agent cần, cài một lượt. Không còn tab "Sức mạnh" để bấm cài lẻ về
+  # sau, nên chỗ này phải cài cho đủ — một lần cài xong là dùng được hết.
+  #
+  #   nodejs git            bắt buộc
+  #   bash                  shell agent chạy lệnh trong đó
+  #   ripgrep               lo cả grep và glob, nhanh hơn đọc file bằng JS nhiều lần
+  #   jq                    nhiều lệnh agent hay dùng cần nó
+  #   openssh               sshd, để gõ từ máy khác vào
+  #   termux-api            wake lock + thông báo khi agent xong việc
+  #   termux-services       chạy nền qua sv
+  #   android-tools         adb — cần cho ghép nối không dây ở bước sau
   REQUIRED=(nodejs git)
-  EXTRAS=(ripgrep termux-api jq termux-services)
+  TOOLS=(bash ripgrep jq openssh termux-api termux-services android-tools)
+
+  # Nặng, và chỉ cần khi bạn muốn agent chạy/biên dịch code người khác:
+  # python ~130MB, clang+make+binutils ~400MB, proot-distro ~5MB.
+  # Vẫn cài theo mặc định vì "agent đầy đủ" là điều được yêu cầu — đặt
+  # TCA_SKIP_HEAVY=1 nếu bạn đang dùng 4G và muốn bỏ chúng.
+  HEAVY=(python clang make binutils proot-distro)
+  if [ -n "${TCA_SKIP_HEAVY:-}" ]; then
+    HEAVY=()
+    info "TCA_SKIP_HEAVY được đặt — bỏ python và bộ biên dịch"
+  fi
 
   # Tên gói Termux có đổi theo thời gian. Gói nào không tồn tại thì bỏ qua kèm
   # cảnh báo, chứ không làm sập cả lần cài.
   WANT=()
-  for pkg in "${REQUIRED[@]}" "${EXTRAS[@]}"; do
+  for pkg in "${REQUIRED[@]}" "${TOOLS[@]}" "${HEAVY[@]}"; do
     if apt-cache show "$pkg" >/dev/null 2>&1; then
       WANT+=("$pkg")
     else
@@ -324,9 +341,28 @@ DIAG
     exit 1
   fi
 
-  info "đang cài: ${WANT[*]}"
-  if ! apt-get install -y "${KEEP[@]}" "${WANT[@]}" >/dev/null 2>&1; then
-    warn "cài cả lượt thất bại, thử từng gói…"
+  # Dung lượng lấy từ chính apt (`-s` = chạy khô), không phải số ước lượng viết
+  # cứng trong script. Số viết cứng sai ngay lần repo đổi bản, và sai theo hướng
+  # tệ nhất: bạn tin nó rồi hết dung lượng giữa lúc cài.
+  info "đang tính dung lượng cần tải…"
+  if plan="$(apt-get install -y -s "${KEEP[@]}" "${WANT[@]}" 2>/dev/null)"; then
+    need="$(printf '%s\n' "$plan" | sed -n 's/^Need to get \(.*\) of archives.*/\1/p')"
+    disk="$(printf '%s\n' "$plan" | sed -n 's/^After this operation, \(.*\) of additional disk space.*/\1/p')"
+    count="$(printf '%s\n' "$plan" | grep -c '^Inst ' || true)"
+    [ -n "$need" ] && info "cần tải: ${need}${disk:+, chiếm thêm ${disk} bộ nhớ}"
+    [ -z "$need" ] && [ "$count" = "0" ] && info "mọi gói đã có sẵn, không cần tải gì"
+  else
+    warn "không tính được dung lượng trước, vẫn cài tiếp"
+  fi
+
+  # Một lệnh cho tất cả: apt giải phụ thuộc một lần và tải song song, nhanh hơn
+  # hẳn so với gọi lại từng gói. Chỉ khi cả lượt fail mới xuống từng gói, để một
+  # gói lỗi không kéo theo cả phần còn lại.
+  info "đang cài ${#WANT[@]} gói: ${WANT[*]}"
+  apt-get install -y "${KEEP[@]}" "${WANT[@]}" 2>&1 | tail -15
+  install_rc="${PIPESTATUS[0]}"
+  if [ "$install_rc" -ne 0 ]; then
+    warn "cài cả lượt thất bại (mã $install_rc), thử từng gói…"
     for pkg in "${WANT[@]}"; do
       apt-get install -y "${KEEP[@]}" "$pkg" >/dev/null 2>&1 && ok "$pkg" || warn "$pkg thất bại"
     done
@@ -344,6 +380,14 @@ DIAG
     echo "  Chạy tay để xem apt nói gì:  pkg install ${missing[*]}" >&2
     exit 1
   fi
+
+  # Những gói không bắt buộc mà vẫn thiếu: nói ra ở đây, vì không còn tab nào
+  # trong web UI để phát hiện chúng nữa. `tca doctor` là chỗ xem lại về sau.
+  weak=()
+  command -v rg >/dev/null 2>&1 || weak+=(ripgrep)
+  command -v jq >/dev/null 2>&1 || weak+=(jq)
+  command -v adb >/dev/null 2>&1 || weak+=(android-tools)
+  [ ${#weak[@]} -eq 0 ] || warn "thiếu (agent vẫn chạy, yếu hơn): ${weak[*]} — xem thêm: tca doctor"
   ok "xong phần gói"
 else
   step "Không phải Termux — bỏ qua cài gói"

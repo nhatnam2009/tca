@@ -70,11 +70,12 @@ it looks like, and then falls back to fetching the tarball with curl, which is
 demonstrably working because it is how the script itself arrived. git is only
 needed to *update* later, not to install.
 
-It installs the packages, clones into `~/tca`, creates the `tca` and `nhatnam`
-commands, asks Android for storage permission, sets up a service so the daemon
-survives being killed, and stops. It asks no questions: everything interactive
-(ADB pairing, Shizuku, picking a model) lives in the web UI instead, because
-tapping a button on a phone beats typing a command into a terminal.
+It installs every package the agent can use in one `apt-get` pass, clones into
+`~/tca`, creates the `tca` and `nhatnam` commands, asks Android for storage
+permission, sets up a service so the daemon survives being killed, and stops. It
+asks nothing: the size is printed before the download starts, and the one thing
+that genuinely needs a human — ADB pairing — is asked by `nhatnam` on first start,
+where the pairing code is still on screen.
 
 Then:
 
@@ -82,7 +83,13 @@ Then:
 nhatnam
 ```
 
-That prints a URL with an access token. Open it in Chrome on the phone:
+On the first run this asks whether to pair wireless ADB, because without it
+Android kills the agent's child processes part way through a long task. Answer it
+once; from then on the address is remembered and reconnected automatically. If
+there is no terminal attached — Termux:Boot, a service — it skips the question
+instead of hanging.
+
+It prints a URL with an access token. Open it in Chrome on the phone:
 
 ```
 http://127.0.0.1:8787/?token=...
@@ -235,11 +242,22 @@ These cost more debugging time than anything in the code:
   |---|---|---|
   | `root` | `su` | yes |
   | `rish` | the Shizuku app, plus its `rish` files copied into `~` | pairing does; restart the app |
-  | `adb`  | wireless debugging paired from the phone to itself | no, pair again |
+  | `adb`  | wireless debugging paired from the phone to itself | pairing does; the connection is remade for you |
 
-  Run `tca adb-setup`, or use the Power tab in the web UI, which drives the same
-  functions. `tca serve` re-applies the unlocks on every start, because wireless
-  ADB pairing is lost on reboot and the failure is otherwise invisible.
+  `tca serve` handles this at startup rather than leaving it to you to notice:
+
+  1. If root or Shizuku is available, it applies the unlocks and says so.
+  2. Otherwise it retries the last working `adb connect` address, saved in
+     `~/.tca/adb.json` (mode `0600`, and only ever written after a connection is
+     proven). This is the reboot case, and it costs no typing.
+  3. Only if that fails does it ask whether to pair now, and drop into
+     `tca adb-setup`. The question is gated on stdin being a terminal, so a start
+     from Termux:Boot or a runit service never blocks on it — those fall back to
+     picking up privileges in the background as they appear.
+
+  Android hands out a new wireless-debugging port when the toggle is turned off
+  and on, so a saved address can go stale; when it does, you get asked again.
+  `tca adb-setup` remains the way to do all of this by hand.
 - **Battery optimization** suspends the daemon seconds after screen-off. `tca serve`
   now takes a `termux-wake-lock` itself and releases it on exit, so this is no
   longer a step to forget. Set Termux to Unrestricted as well; Xiaomi, Samsung and
@@ -264,24 +282,29 @@ These cost more debugging time than anything in the code:
 
 ## Capabilities
 
-`tca power` (and the Power tab) answers a different question from `doctor`: not
-"is anything broken" but "what could this agent do here that it currently cannot".
-Each entry is described by benefit rather than by package name, scored, and
-grouped into three tiers so everything already working stays collapsed.
+`tca power` answers a different question from `doctor`: not "is anything broken"
+but "what could this agent do here that it currently cannot". Each entry is
+described by benefit rather than by package name, scored, and grouped into three
+tiers so everything already working stays collapsed.
 
 ```sh
 tca power
 ```
 
-The catalogue is `src/capabilities.js`. It is also the allowlist for the install
-endpoint: the browser sends a capability id, never a package name, and apt is
-invoked with an argv array under `--force-confold` (there is no terminal behind an
-HTTP request, so a dpkg conffile prompt would hang it forever).
+The catalogue is `src/capabilities.js`, and `install.sh` installs every package in
+it in one `apt-get` call. A test checks the two lists against each other, because
+the alternative — the table growing a package the installer never installs — is
+what the web UI used to paper over with a per-item Install button.
 
-The Power tab drives the same functions as `tca adb-setup`, and the wireless
-pairing flow is genuinely better there than in the terminal: the address and the
-6-digit code can be pasted straight off the Android settings screen instead of
-typed digit by digit.
+That button, and the Power tab it lived in, are gone. Installing five things one
+tap at a time was a bad way to spend a first run, and it left the agent's power
+depending on whether you found the tab. One pass at install time is the whole
+story now; `tca power` and `tca doctor` are read-only reports on the result.
+
+The installer prints the real download size before it starts, taken from
+`apt-get install -s` rather than numbers typed into the script. Roughly 600 MB of
+that is `python` and the `clang` toolchain; set `TCA_SKIP_HEAVY=1` to leave them
+out and keep the rest.
 
 ## Tools
 
@@ -381,7 +404,7 @@ twice — the tool specs are withheld, *and* the call is refused — because a m
 that saw `write_file` earlier in the conversation can still ask for it.
 
 Plan mode matters more on a phone than on a desktop. You want to approve the
-approach before it spends forty steps of your battery on it.
+approach before it spends half an hour of your battery on it.
 
 ## Sub-agents
 
@@ -402,6 +425,29 @@ worth nothing afterwards.
 Their tool activity is streamed to the UI nested under the delegated task, open
 while it runs. A phone user watching a two-minute sub-agent with nothing on screen
 concludes the app has hung, and that is the bug people actually report.
+
+## When a turn stops
+
+A turn runs until the model stops asking for tools. There is no step budget and no
+`maxSteps` setting — a cap has to be either low enough to cut off real work or high
+enough to be no protection, and choosing the number means guessing about a task
+only the user can see. The old default of 40 did the first thing: the failure was
+a half-finished refactor and an error telling you to raise a number and start over.
+
+What replaced it looks for the shape a stuck agent actually has. Each step is
+fingerprinted by its tool calls *and* their results; three identical fingerprints
+in a row ends the turn and says what was being repeated.
+
+Both halves of that fingerprint carry weight:
+
+- **Calls alone** would flag a legitimate poll — re-reading a file, re-running a
+  build — as a loop, because those calls really are identical every time.
+- **Results included** catches the case a step limit used to catch by accident: a
+  tool failing the same way for ever. The model does not always change course, and
+  without this there is nothing left to stop it before the credit runs out.
+
+Changing arguments is progress, and a changing result is progress. Thirty rounds of
+either is left alone.
 
 ## Context
 
@@ -464,10 +510,12 @@ src/cli.js           serve / run / token / models / doctor / power / adb-setup
 src/web/             the UI: no framework, no build
 install.sh           the one-command install, non-interactive
 tools/gen-seed.mjs   regenerates the offline catalog
+tools/drop-i18n-keys.mjs      removes i18n keys by name, line-accurately
+tools/check-no-tty-start.mjs  starts the daemon with no TTY, checks it never asks
 test/agent.test.mjs        end-to-end against a fake provider
-test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity
+test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity, install.sh
 test/context.test.mjs      pairing, repair, compaction, the store and checkpoints
-test/markdown.test.mjs     the UI renderer, highlighter and Power panel, in a DOM stub
+test/markdown.test.mjs     the UI renderer and highlighter, in a DOM stub
 test/search.test.mjs       ripgrep parity for grep and glob, the plan tool, AGENTS.md
 test/verify.test.mjs       diagnostics, and the tool set each mode and agent gets
 test/websearch.test.mjs    the search parser against a saved page, boot script

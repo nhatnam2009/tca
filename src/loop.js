@@ -15,6 +15,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { stream, ProviderError } from "./provider.js";
 import { callTool, toolSpecs, pickShell } from "./tools.js";
 import { appendMessage, appendCheckpoint, agentHistory, maybeSetTitle, readTodos, SUMMARY_MARKER } from "./store.js";
@@ -27,8 +28,47 @@ const FALLBACK_CONTEXT_WINDOW = 128_000; // used only when the catalog has no en
 /** Project conventions, read fresh every turn so editing the file takes effect. */
 const AGENTS_FILE = "AGENTS.md";
 const AGENTS_MAX = 8_000;
-/** A sub-agent that has not answered in this many steps is stuck, not thorough. */
-const SUBAGENT_MAX_STEPS = 20;
+/**
+ * How many identical tool batches in a row count as being stuck.
+ *
+ * There is deliberately no step budget. A cap has to be either low enough to cut
+ * off real work or high enough to be no protection, and picking the number is
+ * guessing on the user's behalf about a task only they can see. What replaced it
+ * detects the actual failure instead: the same calls, the same arguments, the same
+ * results, over and over. That is never progress, and it is the shape a runaway
+ * loop actually has. Anything genuinely working changes its arguments.
+ *
+ * Three, because two can legitimately happen - re-reading a file after an edit
+ * that turned out to be a no-op, say.
+ */
+const NO_PROGRESS_REPEATS = 3;
+
+/**
+ * One short, comparable string for "what happened this step".
+ *
+ * Hashed rather than kept whole because a step's output can be a megabyte of
+ * file contents, and three of those held live for the whole run - on a phone -
+ * is a real cost for a comparison that only ever asks "the same as last time?".
+ *
+ * Tool calls are sorted first: the model can emit a parallel batch in any order
+ * and it is the same batch. Ids are left out for the same reason - they are fresh
+ * every step by design, so including them would make every step unique and the
+ * check would never fire.
+ *
+ * @param {Array<{name: string, input: any}>} toolCalls
+ * @param {Array<{name: string, output: string, ok: boolean}>} results
+ */
+function hashStep(toolCalls, results) {
+  const calls = toolCalls
+    .map((c) => JSON.stringify([c.name, c.input]))
+    .sort()
+    .join("\n");
+  const out = results
+    .map((r) => JSON.stringify([r.name, r.ok, r.output]))
+    .sort()
+    .join("\n");
+  return createHash("sha1").update(`${calls}\n--\n${out}`).digest("hex");
+}
 
 /**
  * Project-specific instructions, if the workspace has an AGENTS.md.
@@ -279,10 +319,9 @@ export class Agent {
    * @param {string} [args.sessionId]                      required for the root agent
    * @param {"root"|"explore"|"general"} [args.kind]
    * @param {AbortSignal} [args.parentSignal]
-   * @param {number} [args.maxSteps]
    * @param {string} [args.idPrefix]                       keeps nested ids unique
    */
-  constructor({ config, emit, sessionId, kind = "root", parentSignal, maxSteps, idPrefix = "" }) {
+  constructor({ config, emit, sessionId, kind = "root", parentSignal, idPrefix = "" }) {
     this.config = config;
     this.emit = emit;
     this.sessionId = sessionId;
@@ -294,7 +333,6 @@ export class Agent {
       else parentSignal.addEventListener("abort", () => this.controller.abort(), { once: true });
     }
     this.history = kind === "root" ? new SessionHistory(sessionId) : new MemoryHistory();
-    this.maxSteps = maxSteps ?? config.maxSteps ?? 40;
     this.idPrefix = idPrefix;
     /** @type {Map<string, (ok: boolean) => void>} */
     this.pending = new Map();
@@ -348,7 +386,7 @@ export class Agent {
    * because you have almost certainly switched away from the browser. It does not
    * vibrate: only a blocked approval does, since something that buzzes on every
    * completion is something you turn off within a day.
-   * @param {{kind: "done"|"aborted"|"error"|"exhausted", detail: string}} outcome
+   * @param {{kind: "done"|"aborted"|"error"|"stuck", detail: string}} outcome
    * @param {string} lastText
    */
   notifyOutcome(outcome, lastText) {
@@ -361,8 +399,8 @@ export class Agent {
     const title =
       outcome.kind === "done"
         ? "Agent finished"
-        : outcome.kind === "exhausted"
-          ? `Agent stopped after ${outcome.detail} steps`
+        : outcome.kind === "stuck"
+          ? `Agent stopped: no progress on ${outcome.detail}`
           : "Agent failed";
     notify({ title, body, priority: outcome.kind === "done" ? "default" : "high" }).catch(() => {});
   }
@@ -416,7 +454,6 @@ export class Agent {
       },
       kind: /** @type {"explore"|"general"} */ (kind),
       parentSignal: this.controller.signal,
-      maxSteps: SUBAGENT_MAX_STEPS,
       idPrefix: `${id}_`,
     });
     // Approvals must reach the user, not the sub-agent's own empty map.
@@ -534,13 +571,18 @@ export class Agent {
       notify({ title: "Agent working\u2026", body: text.slice(0, 120), priority: "low", ongoing: true }).catch(() => {});
     }
 
-    /** @type {{kind: "done"|"aborted"|"error"|"exhausted", detail: string}} */
+    /** @type {{kind: "done"|"aborted"|"error"|"stuck", detail: string}} */
     let outcome = { kind: "error", detail: "" };
     /** Last thing the model said, which is the useful notification body. */
     let lastText = "";
+    /** Fingerprints of recent tool batches, for the no-progress check below. */
+    /** @type {string[]} */
+    const recent = [];
+    let step = 0;
 
     try {
-      for (let step = 0; step < this.maxSteps; step++) {
+      for (;;) {
+        step += 1;
         // Rebuilt every step: AGENTS.md and the plan can both have changed, and a
         // stale plan in the prompt is worse than none.
         const system = this.buildSystemPrompt();
@@ -555,8 +597,6 @@ export class Agent {
         if (broken.length) {
           throw new Error(`internal: history is not sendable (${broken.slice(0, 3).join("; ")})`);
         }
-
-        this.emit({ type: "step", n: step + 1, of: this.maxSteps });
 
         let assistantText = "";
         let reasoning = "";
@@ -628,14 +668,35 @@ export class Agent {
           this.emit({ type: "done", stopReason: "aborted" });
           return lastText;
         }
-      }
 
-      outcome = { kind: "exhausted", detail: String(this.maxSteps) };
-      this.emit({
-        type: "error",
-        message: `Stopped after ${this.maxSteps} steps without finishing. Raise maxSteps in Settings or split the task.`,
-      });
-      return lastText;
+        // The only thing left that stops the loop, now that there is no step
+        // budget. Not a cap in disguise: it fires on identical work producing
+        // identical output, which is never progress, and never on a long task
+        // that is getting somewhere.
+        //
+        // The results are part of the fingerprint, not just the calls. Both
+        // halves matter. Without the results, a poller that legitimately re-reads
+        // the same file waiting for it to change looks stuck. Without the calls,
+        // nothing is comparable at all. And including the results is what catches
+        // the worse case: a tool failing the same way forever, which used to be
+        // bounded by the step limit and would otherwise now run until the credit
+        // ran out.
+        const fingerprint = hashStep(toolCalls, results);
+        recent.push(fingerprint);
+        if (recent.length > NO_PROGRESS_REPEATS) recent.shift();
+        if (recent.length === NO_PROGRESS_REPEATS && recent.every((f) => f === fingerprint)) {
+          const names = [...new Set(toolCalls.map((c) => c.name))].join(", ");
+          outcome = { kind: "stuck", detail: names };
+          this.emit({
+            type: "error",
+            message:
+              `Stopped after ${step} steps: the same call (${names}) was repeated ${NO_PROGRESS_REPEATS} times ` +
+              `with identical arguments and identical results, so it is not making progress. ` +
+              `Rephrase the task or tell it what to try instead.`,
+          });
+          return lastText;
+        }
+      }
     } catch (err) {
       const e = /** @type {Error} */ (err);
       if (this.controller.signal.aborted || e.name === "AbortError") {

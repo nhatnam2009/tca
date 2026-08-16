@@ -50,7 +50,6 @@ import os from "node:os";
  * @property {boolean} [verifyEdits]                run the project's checker after a write
  * @property {"vi"|"en"} [lang]                     UI + doctor language
  * @property {string[]} [denyCommands]              extra regexes, always blocked
- * @property {number} [maxSteps]
  * @property {number} [port]
  * @property {string} [instructions]                extra system prompt text
  */
@@ -99,7 +98,6 @@ export function defaultConfig() {
     // Vietnamese by default: this is built for Termux users on a phone, and the
     // web UI has a switch. `tca doctor` reads it too.
     lang: "vi",
-    maxSteps: 40,
     port: 8787,
     instructions: "",
     denyCommands: [],

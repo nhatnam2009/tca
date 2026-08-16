@@ -76,18 +76,6 @@
           Chat
         </button>
         <button
-          id="tab-power"
-          class="tab"
-          type="button"
-          role="tab"
-          aria-selected="false"
-          aria-controls="panel-power"
-          tabindex="-1"
-          data-i18n="tab.power"
-        >
-          Power
-        </button>
-        <button
           id="tab-settings"
           class="tab"
           type="button"
@@ -388,25 +376,6 @@
         </div>
       </section>
 
-      <!-- ============================================================= power -->
-      <!--
-        Device capability: what the agent could do here and what is missing, with
-        a one-tap install for each gap. Filled entirely from GET /api/capabilities.
-      -->
-      <section
-        id="panel-power"
-        class="panel power"
-        role="tabpanel"
-        aria-labelledby="tab-power"
-        hidden
-      >
-        <h1 class="h1" data-i18n="tab.power">Power</h1>
-        <div id="power-body"></div>
-        <button id="btn-recheck-power" class="btn block" type="button" data-i18n="common.recheck">
-          Recheck
-        </button>
-      </section>
-
       <!-- ========================================================== settings -->
       <section
         id="panel-settings"
@@ -671,16 +640,6 @@
               finds out immediately that what it wrote does not compile. Costs a
               second or two per edit.
             </p>
-
-            <label for="cfg-maxsteps" data-i18n="agent.maxSteps">Max steps per turn</label>
-            <input
-              id="cfg-maxsteps"
-              type="number"
-              min="1"
-              max="500"
-              step="1"
-              inputmode="numeric"
-            />
 
             <label for="cfg-instructions" data-i18n="agent.instructions">Extra instructions</label>
             <textarea

@@ -4,12 +4,11 @@
  * The old `tca doctor` answered a different question: "is anything broken?".
  * That is not what a new user needs. They need to know what they are leaving on
  * the table, in terms of what the agent can actually do for them - and then be
- * able to fix it with one tap instead of reading a shell command out of a
- * paragraph of text.
+ * told the one command that closes the gap, not a paragraph to read around.
  *
  * So each entry here is a capability, described by benefit rather than by
  * package name ("find code much faster", not "ripgrep"), scored, and grouped
- * into three tiers so the UI can hide everything that is already fine.
+ * into three tiers so the report can collapse everything that is already fine.
  *
  * Every user-visible string is an i18n key. The payload carries both the key and
  * the resolved text: the terminal wants text, the browser wants keys so it can
@@ -29,13 +28,13 @@ import { t, pickLang } from "./i18n.js";
  *
  * Three groups, and the difference between them is who does the work:
  *
- *   core      install.sh already installed it. Nothing to decide, nothing to tap.
+ *   core      install.sh already installed it. Nothing to decide, nothing to do.
  *             It appears as one health line, and only becomes actionable if the
  *             install actually failed - which is a repair, not a choice.
  *   device    only you can do it: an Android permission dialog, an F-Droid app,
- *             pairing ADB. This is the whole reason the Power tab exists.
- *   optional  heavy, and genuinely a choice. Hundreds of megabytes, so it is
- *             folded away and asks before downloading.
+ *             pairing ADB. `tca serve` asks about the last one on startup.
+ *   optional  heavy, and genuinely a choice. Hundreds of megabytes, which is why
+ *             install.sh takes TCA_SKIP_HEAVY=1.
  *
  * The earlier required/recommended/advanced split was wrong: it showed an Install
  * button for ripgrep next to one for a 400 MB toolchain, as though they were the
@@ -103,7 +102,18 @@ export const CAPABILITIES = [
 
 export const TIERS = /** @type {Tier[]} */ (["core", "device", "optional"]);
 
-/** Capability id -> package names, for the install endpoint's allowlist. */
+/**
+ * Capability id -> package names.
+ *
+ * This was the allowlist for an HTTP install endpoint, which is why it takes an
+ * arbitrary id and returns null for anything not in the table rather than
+ * indexing an object. The endpoint is gone; the lookup stays because install.sh
+ * and this table have to be checked against each other, and doing that through
+ * one accessor is what makes the check hard to get subtly wrong.
+ *
+ * @param {string} id
+ * @returns {string[]|null}
+ */
 export function packagesFor(id) {
   const cap = CAPABILITIES.find((c) => c.id === id);
   if (!cap || !cap.packages || !cap.packages.length) return null;

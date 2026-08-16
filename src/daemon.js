@@ -20,14 +20,6 @@ import { addProvider, testProvider, seedFromEnv } from "./setup.js";
 import { createSession, listSessions, getSession, deleteSession } from "./store.js";
 import { Runner } from "./loop.js";
 import { getStatus } from "./status.js";
-import { getCapabilities, packagesFor } from "./capabilities.js";
-import {
-  aptPhase,
-  installBootScript,
-  invalidateBackendCache,
-  removeBootScript,
-  runStreaming,
-} from "./privilege.js";
 import { DICT, LANGS, DEFAULT_LANG } from "./i18n.js";
 
 const WEB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "web");
@@ -77,9 +69,6 @@ export async function serve(opts = {}) {
   const listeners = new Map();
   /** @type {Map<string, Runner>} */
   const runners = new Map();
-  // dpkg holds a lock: two concurrent taps on "Install" would only produce a
-  // confusing failure, so refuse the second one with a 409 instead.
-  let installBusy = false;
 
   const emitTo = (sessionId, event) => {
     const set = listeners.get(sessionId);
@@ -213,32 +202,6 @@ export async function serve(opts = {}) {
       return json(res, 200, { ok: true, path: file });
     }
 
-    // ---- capabilities & Android privileges --------------------------------
-    // What the agent could do on this device, what is missing, and the three
-    // ways to grant it the Android privileges it needs.
-    if (method === "GET" && pathname === "/api/capabilities") {
-      const { config } = loadConfig();
-      return json(res, 200, await getCapabilities(url.searchParams.get("lang") || config.lang));
-    }
-
-    if (method === "POST" && pathname === "/api/capabilities/install") {
-      const body = await readJson(req);
-      // Accepts a batch, because installing five things one tap at a time is a
-      // bad way to spend a first run. A single id still works.
-      const ids = Array.isArray(body.ids) ? body.ids : body.id ? [body.id] : [];
-      return installCapabilities(res, ids.map((x) => String(x)));
-    }
-
-    // Start on boot. We write the script; the app that runs it is a separate APK
-    // we can neither install nor see, so the UI says so rather than pretending.
-    if (method === "POST" && pathname === "/api/privilege/boot-script") {
-      if (!process.env.TERMUX_VERSION) return json(res, 400, { error: "Termux only" });
-      const body = await readJson(req);
-      if (body.remove) return json(res, 200, removeBootScript());
-      const cli = fileURLToPath(new URL("./cli.js", import.meta.url));
-      return json(res, 200, installBootScript(cli));
-    }
-
     // ---- providers & catalog ----------------------------------------------
     if (method === "GET" && pathname === "/api/providers") {
       return json(res, 200, {
@@ -354,88 +317,6 @@ export async function serve(opts = {}) {
     }
 
     return json(res, 404, { error: `no route for ${method} ${pathname}` });
-  }
-
-  /**
-   * Install the packages behind one or more capabilities, streaming progress.
-   *
-   * This is the only place where something a browser sent reaches a process
-   * spawn, so it is deliberately narrow:
-   *   - the body carries capability ids, never package names, and each id is
-   *     looked up in the fixed table in capabilities.js;
-   *   - apt is invoked with an argv array, never through a shell, so no
-   *     metacharacter in any input could matter even if one got this far;
-   *   - --force-confold plus DEBIAN_FRONTEND=noninteractive, because there is no
-   *     terminal here: a dpkg conffile prompt would hang the request forever;
-   *   - one install at a time, since dpkg holds a lock anyway and two concurrent
-   *     taps would just produce a confusing failure.
-   *
-   * The response is newline-delimited JSON rather than one object at the end.
-   * apt takes tens of seconds to minutes on a phone, and a request that returns
-   * nothing until it finishes leaves the UI with no way to show anything but a
-   * frozen spinner - which looks identical to being hung.
-   */
-  async function installCapabilities(res, ids) {
-    if (!process.env.TERMUX_VERSION) {
-      return json(res, 400, { error: "package installs are only supported under Termux" });
-    }
-
-    const wanted = [];
-    for (const id of ids) {
-      const packages = packagesFor(id);
-      if (!packages) return json(res, 404, { error: `nothing installable for capability: ${id}` });
-      wanted.push({ id, packages });
-    }
-    if (!wanted.length) return json(res, 400, { error: "no capability ids given" });
-    if (installBusy) return json(res, 409, { error: "another install is running" });
-
-    installBusy = true;
-    res.writeHead(200, {
-      "content-type": "application/x-ndjson; charset=utf-8",
-      "cache-control": "no-store",
-      // Without this Android's proxy layer can sit on the body until the request
-      // ends, which is exactly what streaming is meant to avoid.
-      "x-accel-buffering": "no",
-    });
-    const send = (event) => res.write(`${JSON.stringify(event)}\n`);
-
-    try {
-      const { config } = loadConfig();
-      const done = [];
-      const failed = [];
-
-      for (const [index, entry] of wanted.entries()) {
-        send({ type: "start", id: entry.id, packages: entry.packages, index, total: wanted.length });
-        const result = await runStreaming(
-          "apt-get",
-          [
-            "install",
-            "-y",
-            "-o",
-            "Dpkg::Options::=--force-confold",
-            "-o",
-            "Dpkg::Options::=--force-confdef",
-            ...entry.packages,
-          ],
-          { timeout: 20 * 60_000, env: { DEBIAN_FRONTEND: "noninteractive" } },
-          (line) => send({ type: "log", id: entry.id, line: line.slice(0, 500), phase: aptPhase(line) }),
-        );
-        (result.ok ? done : failed).push(entry.id);
-        send({ type: "item_done", id: entry.id, ok: result.ok, index, total: wanted.length });
-        // A failed package usually means the whole batch will fail the same way
-        // (no space, no network, dpkg lock), so stop rather than grind through it.
-        if (!result.ok) break;
-      }
-
-      invalidateBackendCache();
-      const caps = await getCapabilities(config.lang);
-      send({ type: "done", ok: failed.length === 0, installed: done, failed, capabilities: caps });
-    } catch (err) {
-      send({ type: "done", ok: false, error: `${/** @type {Error} */ (err).name}: ${/** @type {Error} */ (err).message}` });
-    } finally {
-      installBusy = false;
-      res.end();
-    }
   }
 
   function openStream(req, res, sessionId) {

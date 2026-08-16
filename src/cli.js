@@ -25,12 +25,14 @@ import { getCapabilities } from "./capabilities.js";
 import {
   adbConnect,
   adbPair,
+  adbReconnect,
   applyUnlocks,
   copyRishFiles,
   detectBackend,
   hasBinary,
   installAdb,
   invalidateBackendCache,
+  readAdbAddress,
   rishFilesPresent,
   run as runProcess,
 } from "./privilege.js";
@@ -117,6 +119,10 @@ async function cmdServe(args) {
   const { added } = seedFromEnv();
   if (added.length) console.log(`Found API keys in the environment for: ${added.join(", ")}\n`);
   await holdWakeLock();
+  // Before the URL prints, not after. The privileges decide whether a long turn
+  // survives at all, and the answer is one keypress; printing a URL first only
+  // invites the user to open it and start a task that Android is going to kill.
+  await setupPrivileges();
   await serve({ port });
   managePrivileges(); // background, never blocks the URL from printing
 }
@@ -154,54 +160,137 @@ async function holdWakeLock() {
  * long turns, and the fix belongs at startup, not behind a tab someone has to
  * find and tap through.
  *
- * When nothing is reachable it keeps checking in the background instead of giving
- * up. Granting ADB means going into Android settings, or opening the Shizuku app,
- * and coming back - so the moment that happens, this notices and applies the
- * unlocks without needing a restart.
+ * Two halves, and the split is about whether anyone is watching:
+ *
+ *   setupPrivileges()   runs before the daemon, may ask a question. Only when
+ *                       stdin is a terminal, so Termux:Boot never hangs on it.
+ *   managePrivileges()  runs after, asks nothing, and picks up a grant that
+ *                       arrives later - from the Shizuku app, or another session.
  */
 const PRIVILEGE_RETRY_MS = 20_000;
 const PRIVILEGE_RETRY_FOR = 15 * 60_000;
 
+/** One line saying what the unlocks did. Shared so both halves report alike. */
+function reportUnlocks(res) {
+  const failed = res.applied.filter((a) => !a.ok).length;
+  console.log(
+    failed
+      ? `${C.yellow("[!]")}  Privileges via ${res.kind}: ${res.applied.length - failed}/${res.applied.length} applied.`
+      : `${C.green("[ok]")} Privileges via ${res.kind}: process limit lifted.`,
+  );
+}
+
+/**
+ * Get privileged before the daemon starts, asking if that is what it takes.
+ *
+ * The old version of this only ever printed a suggestion to go and run
+ * `tca adb-setup` later, which meant the common case - a phone that has been
+ * paired before and just rebooted - needed the user to notice the notice, and
+ * then retype an address they had already typed once. Now the address is on
+ * disk, so a reboot costs one silent reconnect, and pairing is only asked for
+ * when there is genuinely nothing to reconnect to.
+ */
+async function setupPrivileges() {
+  if (!process.env.TERMUX_VERSION) return;
+
+  const { config } = loadConfig();
+  const lang = pickLang(config.lang);
+  const T = (key, params) => t(lang, key, params);
+
+  // Root and Shizuku survive a reboot on their own, and an adb connection can
+  // too if the phone never went down. Nothing to do in any of those cases.
+  const backend = await detectBackend();
+  if (backend.kind) {
+    reportUnlocks(await applyUnlocks(backend.kind));
+    return;
+  }
+
+  // The reboot case. Android keeps the pairing but drops the connection, so this
+  // is usually just `adb connect` against an address we already know.
+  const saved = readAdbAddress();
+  if (saved) {
+    console.log(C.dim(`  ${T("boot.reconnect.trying", { address: saved })}`));
+    const again = await adbReconnect();
+    if (again.ok) {
+      console.log(`${C.green("[ok]")} ${T("boot.reconnect.ok", { address: saved })}`);
+      reportUnlocks(await applyUnlocks("adb"));
+      return;
+    }
+    // Stale, not wrong: the port changes when wireless debugging is toggled.
+    // Keep it anyway - the next boot may well come up on the same port.
+    console.log(`${C.yellow("[!]")}  ${T("boot.reconnect.stale", { address: saved })}`);
+  }
+
+  console.log("");
+  console.log(`${C.yellow("[!]")}  ${C.bold(T("boot.privNeeded"))}`);
+  console.log(`     ${C.dim(T("boot.privWhy"))}`);
+  console.log("");
+
+  // No terminal means Termux:Boot, a runit service, or a pipe started this.
+  // A prompt there would block a start that nobody is sitting in front of, and
+  // the daemon would never come up at all.
+  if (!process.stdin.isTTY) {
+    console.log(`     ${C.dim(T("boot.noTty"))}`);
+    return;
+  }
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  let answer = "";
+  try {
+    answer = (await rl.question(`  ${C.bold(T("boot.setupNow"))} [Y/n] `)).trim().toLowerCase();
+  } catch {
+    // stdin closed under us; treat it as "no" and get on with starting.
+  } finally {
+    rl.close();
+  }
+  if (answer === "n" || answer === "no") {
+    console.log(`     ${C.dim(T("boot.skipped"))}`);
+    return;
+  }
+
+  // Into the real wizard rather than a second, worse copy of it inline here: it
+  // also offers root and Shizuku, and neither of those needs any pairing.
+  await cmdAdbSetup();
+  // adb-setup marks a failed attempt on the exit code, which made sense when it
+  // was the whole process. The daemon is about to start and keep running, so
+  // leaving it set would have `nhatnam` exit non-zero for an unrelated reason.
+  process.exitCode = 0;
+}
+
 function managePrivileges() {
   if (!process.env.TERMUX_VERSION) return;
 
-  const report = (res) => {
-    const failed = res.applied.filter((a) => !a.ok).length;
-    console.log(
-      failed
-        ? `${C.yellow("[!]")}  Privileges via ${res.kind}: ${res.applied.length - failed}/${res.applied.length} applied.`
-        : `${C.green("[ok]")} Privileges via ${res.kind}: process limit lifted.`,
-    );
-  };
-
   (async () => {
+    // Asks nothing and says nothing unless something changes: setupPrivileges
+    // has already reported the current state, and repeating it here would read
+    // as a second, contradictory verdict.
     const first = await detectBackend();
-    if (first.kind) {
-      report(await applyUnlocks(first.kind));
-      return;
-    }
+    if (first.kind) return;
 
-    console.log("");
-    console.log(`${C.yellow("[!]")}  ${C.bold("No elevated privileges yet.")}`);
-    console.log("     Android caps this app at ~32 child processes and kills the rest,");
-    console.log("     so a long task will break part way through.");
-    console.log("");
-    console.log(`     Set it up now:  ${C.bold("tca adb-setup")}   (root, Shizuku, or wireless ADB)`);
-    console.log(`     Or grant it from another Termux session - this will pick it up on its own.`);
-    console.log("");
-
-    // Poll rather than ask. The user is going to be in the Android settings app,
-    // not looking at this terminal, and a blocking prompt here would stop the
-    // daemon from starting at all.
     const until = Date.now() + PRIVILEGE_RETRY_FOR;
     while (Date.now() < until) {
       await new Promise((r) => setTimeout(r, PRIVILEGE_RETRY_MS));
       invalidateBackendCache();
-      const again = await detectBackend();
+      let again = await detectBackend();
+
+      // Retry the saved address too, not just root and Shizuku. Turning wireless
+      // debugging off and on is the usual way out of a stale port, and it often
+      // comes back on the same one - so this heals the reboot case without
+      // needing the user to restart the daemon or retype anything.
+      if (!again.kind && readAdbAddress()) {
+        const back = await adbReconnect();
+        if (back.ok) {
+          const lang = pickLang(loadConfig().config.lang);
+          console.log("");
+          console.log(`${C.green("[ok]")} ${t(lang, "boot.reconnect.ok", { address: back.address })}`);
+          again = await detectBackend();
+        }
+      }
+
       if (!again.kind) continue;
       console.log("");
       console.log(`${C.green("[ok]")} Picked up ${again.kind} privileges - applying the unlocks now.`);
-      report(await applyUnlocks(again.kind));
+      reportUnlocks(await applyUnlocks(again.kind));
       return;
     }
   })().catch(() => {});
@@ -249,8 +338,13 @@ async function cmdDoctor() {
 }
 
 /**
- * The terminal twin of the web UI's Power panel: grouped by tier, missing items
- * first, with the exact command to fix each one.
+ * What the agent can do on this device, grouped by tier, missing items first,
+ * with the exact command to fix each one.
+ *
+ * This used to have a twin in the web UI with an Install button next to every
+ * gap. The button was the wrong answer: install.sh installs the whole list in
+ * one pass now, so a gap here means something specific went wrong, and the fix
+ * text says what - which a button cannot.
  */
 async function cmdPower() {
   const { config } = loadConfig();
@@ -284,7 +378,9 @@ async function cmdPower() {
     }
     console.log("");
   }
-  console.log("Install any of these with one tap in the web UI: tca serve -> Power tab\n");
+  // Nothing to tap: the fix line under each gap is the whole answer. Re-running
+  // the installer is the blunt way to close several at once.
+  console.log(`${C.dim("Re-run the installer to get the whole list back: install.sh")}\n`);
 }
 
 /**
@@ -557,6 +653,9 @@ async function cmdAdbSetup() {
   const connected = await adbConnect(connAddr);
   if (!connected.ok) return bail(T(connected.errKey), connected.out);
   ok(`${T("priv.pair.doConnect")}: ${connAddr}`);
+  // adbConnect saved the address once it was proven to work, so the next start
+  // reconnects without asking. Say so, because the old advice was the opposite.
+  info(C.dim(T("boot.saved", { address: connAddr })));
   warn(T("power.rebootWarn"));
   return finish();
 }

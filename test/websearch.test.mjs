@@ -15,7 +15,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "tca-web-"));
 const WORKSPACE = path.join(TMP, "workspace");
 fs.mkdirSync(WORKSPACE, { recursive: true });
@@ -246,40 +248,44 @@ test("the boot script is written, is executable, and points at this checkout", a
   }
 });
 
-test("start-on-boot is a listed capability, and the route is Termux-only", async (t) => {
+test("start-on-boot writes a script that points at this checkout", async () => {
   const { CAPABILITIES } = await import("../src/capabilities.js");
   const boot = CAPABILITIES.find((c) => c.id === "boot");
   assert.ok(boot, "the catalogue should list it");
   assert.equal(boot.termuxOnly, true);
   assert.equal(boot.packages, undefined, "it writes a file; there is no package to install");
 
-  fs.writeFileSync(process.env.TCA_CONFIG, JSON.stringify({ active: "", providers: {}, workspace: WORKSPACE }));
-  const { serve } = await import("../src/daemon.js");
-  const { server, port, token } = await serve({ port: 0, quiet: true });
-  t.after(() => server.close());
+  // Tested through the function, not over HTTP. The route it used to have was for
+  // the Power tab, which is gone - install.sh is what calls this now, and a route
+  // with no caller that can write into ~/.termux/boot is not worth keeping alive.
+  const { installBootScript, removeBootScript } = await import("../src/privilege.js");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tca-boot-"));
+  const originalHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const cli = path.join(HERE, "..", "src", "cli.js");
+    const made = installBootScript(cli);
+    assert.equal(made.ok, true, JSON.stringify(made));
+    assert.ok(made.path.startsWith(home), `wrote outside HOME: ${made.path}`);
 
-  const call = (body) =>
-    fetch(`http://127.0.0.1:${port}/api/privilege/boot-script`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const body = fs.readFileSync(made.path, "utf8");
+    assert.match(body, /^#!/, "it has to be a script, not a note");
+    // The path is JSON-quoted in the script, which escapes backslashes, so compare
+    // against the same encoding rather than the raw string.
+    assert.ok(body.includes(JSON.stringify(cli)), "it must point at this checkout, not at a guessed path");
+    assert.match(body, /\bserve\b/, "it should start the daemon");
+    // Termux:Boot runs it with no terminal, so it cannot expect one.
+    assert.ok(!/^\s*read\b/m.test(body), "nothing interactive may run at boot");
 
-  // Asserted against the environment rather than against a fixed 400. Hardcoding
-  // "there is no Termux:Boot on a dev machine" made this test fail on the one
-  // platform the project is for, which is the wrong way round: a suite that cannot
-  // be green on the target device stops being a signal there.
-  if (process.env.TERMUX_VERSION) {
-    const res = await call({});
-    assert.equal(res.status, 200, "on Termux the script is installable");
-    const body = await res.json();
-    assert.ok(body.path, "it should say where it wrote the script");
+    const mode = fs.statSync(made.path).mode & 0o777;
+    if (process.platform !== "win32") assert.ok(mode & 0o100, "it has to be executable");
 
-    // Undo it, so running the suite does not leave a boot hook behind on the phone.
-    const removed = await call({ remove: true });
-    assert.equal(removed.status, 200);
-  } else {
-    const res = await call({});
-    assert.equal(res.status, 400, "off Termux there is no Termux:Boot to install into");
+    const gone = removeBootScript();
+    assert.equal(gone.ok, true);
+    assert.equal(fs.existsSync(made.path), false);
+  } finally {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });

@@ -31,14 +31,9 @@ export const DICT = {
     "tier.optional.hint": "Nặng, và thật sự là tuỳ chọn. Hỏi trước khi tải.",
 
     // ------------------------------------------------------------ chung
-    "common.installed": "Đã có",
-    "common.missing": "Chưa có",
-    "common.unknown": "Chưa rõ",
     "common.install": "Cài ngay",
     "common.installing": "Đang cài…",
-    "common.recheck": "Kiểm tra lại",
     "common.size": "{n} MB",
-    "common.package": "gói {name}",
 
     // ------------------------------------------------------- năng lực
     "cap.node.title": "Node.js",
@@ -94,11 +89,6 @@ export const DICT = {
       "Android không cho app thường có service lúc boot, nên sau khi khởi động lại bạn phải mở Termux mới có agent. App Termux:Boot giải quyết việc đó.",
     "cap.boot.fix": "Cài app Termux:Boot từ F-Droid, rồi bấm nút bên dưới để tạo script khởi động.",
 
-    "boot.install": "Tạo script khởi động",
-    "boot.installed": "Đã tạo. Cài app Termux:Boot từ F-Droid là xong.",
-    "boot.remove": "Bỏ tự chạy khi khởi động",
-    "boot.removed": "Đã bỏ script khởi động.",
-    "boot.appNote": "Script đã có. Nó chỉ chạy nếu app Termux:Boot được cài — Termux không kiểm tra được điều đó từ bên trong.",
 
     "cap.python.title": "Chạy được code Python",
     "cap.python.why": "Không có Python thì agent viết được file .py nhưng không chạy thử được.",
@@ -155,6 +145,17 @@ export const DICT = {
     "priv.err.rish_missing": "Chưa thấy rish trong thư mục nhà. Làm theo hướng dẫn Shizuku ở trên.",
     "priv.err.rish_dead": "Có file rish nhưng chạy không được — thường là app Shizuku chưa được Start.",
     "priv.err.no_root": "Không dùng được su. Máy này có thể chưa root.",
+    "priv.err.no_saved_address": "Chưa lưu địa chỉ ADB nào — lần này phải ghép nối lại.",
+
+    "boot.reconnect.trying": "Thử kết nối lại ADB ở {address}…",
+    "boot.reconnect.ok": "Đã kết nối lại {address} — không cần ghép nối lại.",
+    "boot.reconnect.stale": "{address} không còn dùng được (Android đổi cổng sau khi khởi động lại).",
+    "boot.privNeeded": "Chưa có quyền nâng cao. Android sẽ giết tiến trình con của agent giữa lúc chạy.",
+    "boot.privWhy": "Ghép nối ADB không dây một lần là xong, và lần sau sẽ tự kết nối lại.",
+    "boot.setupNow": "Ghép nối ngay bây giờ?",
+    "boot.skipped": "Bỏ qua. Chạy `tca adb-setup` khi nào bạn muốn, agent vẫn hoạt động nhưng yếu hơn.",
+    "boot.noTty": "Không có bàn phím ở đây (chạy nền) — sẽ tự dò quyền trong lúc chạy.",
+    "boot.saved": "Đã lưu {address} để lần sau tự kết nối.",
     "status.phantom.value": "Giới hạn tiến trình con: {n}",
     "status.phantom.unknown": "Giới hạn tiến trình con: chưa đọc được (cần quyền nâng cao)",
     "status.env_keys": "API key trong môi trường: {list}",
@@ -175,7 +176,6 @@ export const DICT = {
     "app.skipToComposer": "Bỏ qua, tới ô nhập tin",
     "app.sections": "Các phần",
     "tab.chat": "Chat",
-    "tab.power": "Sức mạnh",
     "tab.settings": "Cài đặt",
 
     // ---------------------------------------------------------------- wizard
@@ -230,7 +230,6 @@ export const DICT = {
     "chat.deleted": "Đã xoá phiên",
     "chat.sessionFallback": "Phiên {id}",
     "chat.thinking": "suy nghĩ",
-    "chat.step": "Bước {n}/{of}…",
     "chat.compacting": "Hội thoại đã dài. Đang tóm tắt phần cũ để vừa cửa sổ ngữ cảnh…",
     "chat.compacted": "Đã tóm tắt: {before} → {after} token. Phần cũ vẫn còn ở trên để bạn đọc lại.",
     "chat.cacheHit": "{n} token đọc từ cache",
@@ -349,7 +348,6 @@ export const DICT = {
     "agent.verifyEdits": "Kiểm tra file sau khi ghi",
     "agent.verifyEditsHint":
       "Bật (khuyên dùng): sau mỗi lần ghi, file được chạy qua đúng công cụ kiểm tra mà project đã có — node --check, tsc, ruff, gofmt — và lỗi được trả thẳng lại cho agent, nên nó biết ngay là code vừa viết không build được. Tốn thêm một hai giây mỗi lần sửa.",
-    "agent.maxSteps": "Số bước tối đa mỗi lượt",
     "agent.instructions": "Chỉ dẫn thêm",
     "agent.instructionsHint": "Được thêm vào system prompt của mọi phiên.",
     "agent.deny": "Lệnh bị chặn",
@@ -357,7 +355,6 @@ export const DICT = {
 
     // ------------------------------------------------------- thông báo ngắn
     "ui.stopping": "Đang dừng…",
-    "ui.checking": "Đang kiểm tra…",
     "ui.searching": "Đang tìm…",
     "ui.configReloaded": "Đã tải lại config từ đĩa",
     "ui.savedTo": "Đã lưu vào {path}",
@@ -372,7 +369,6 @@ export const DICT = {
     "ui.noMatch": "Không tìm thấy gì. Thử từ ngắn hơn.",
     "ui.noRecommendations": "Server không trả về gợi ý nào.",
     "ui.noSavedIds": "Provider này chưa có mã model nào được lưu.",
-    "ui.notTermux": "Không chạy trên Termux — bỏ qua các mục chỉ dành cho Android.",
     "ui.getApiKey": "Lấy API key",
     "ui.manualBaseUrl": "cần nhập base URL thủ công",
 
@@ -384,34 +380,14 @@ export const DICT = {
     "todo.status.done": "đã xong",
 
     // ------------------------------------------------------------ tab Power
-    "power.allGood": "Mọi thứ ở tầng này đã sẵn sàng.",
-    "power.installed": "Đã cài xong: {title}",
-    "power.installFailed": "Cài thất bại. Xem chi tiết bên dưới.",
-    "power.installLog": "Chi tiết",
     "power.privSection": "Quyền nâng cao",
     "power.chooseMethod": "Chọn cách cấp quyền:",
     "power.step": "Bước {n}/{total}",
     "power.applied": "Đã áp dụng {ok}/{total} mở khoá",
     "power.appliedAll": "Đã mở khoá xong. Agent tạo bao nhiêu tiến trình cũng được.",
     "power.appliedSome": "Một số mở khoá bị từ chối. Vài hãng chặn appops kể cả qua ADB; mục quan trọng nhất là mục đầu.",
-    "power.rebootWarn": "Ghép nối ADB không dây mất sau khi khởi động lại máy. Lúc đó chạy lại phần này.",
+    "power.rebootWarn": "Kết nối ADB mất sau khi khởi động lại máy, nhưng địa chỉ đã được lưu — lần chạy sau tự kết nối lại. Chỉ khi Android đổi cổng mới phải ghép nối lại.",
 
-    "power.coreOk": "Nền tảng đầy đủ",
-    "power.coreOkNote": "{n} thứ đã sẵn sàng — lệnh cài đặt đã lo hết.",
-    "power.repair": "Sửa lần cài ({n})",
-    "power.repairNote":
-      "{n} thứ đáng lẽ đã được cài bởi lệnh cài đặt nhưng không có. Thường là do lần cài bị ngắt giữa đường.",
-    "power.installAll": "Cài tất cả ({n} · {mb} MB)",
-    "power.confirmSize": "Tải khoảng {mb} MB?\n\nSẽ dùng dữ liệu di động nếu bạn không ở Wi-Fi.",
-    "power.progressTitle": "Đang cài",
-    "power.progressItem": "{n}/{total} · {title}",
-    "power.phase.download": "đang tải…",
-    "power.phase.unpack": "đang giải nén…",
-    "power.phase.configure": "đang cấu hình…",
-    "power.phase.start": "đang bắt đầu…",
-    "power.installedN": "Đã cài xong {n} thứ.",
-    "power.failedAt": "Thất bại ở: {title}",
-    "power.busy": "Đang có lượt cài khác chạy — chờ nó xong.",
 
     "priv.pair.installAdb": "Cài android-tools",
     "priv.pair.s1.title": "Bật Gỡ lỗi không dây",
@@ -439,8 +415,6 @@ export const DICT = {
     "priv.shizuku.storageFirst": "Cần quyền bộ nhớ trước. Chạy termux-setup-storage trong Termux.",
 
     "priv.root.check": "Thử bằng su",
-    "priv.handledByCli":
-      "Mỗi lần gõ nhatnam, agent tự tìm quyền và áp dụng luôn. Nếu bạn cấp ADB ở một cửa sổ Termux khác, nó sẽ tự nhận trong vòng 20 giây — không cần khởi động lại.",
   },
 
   en: {
@@ -453,14 +427,9 @@ export const DICT = {
     "tier.optional.hint": "Heavy, and genuinely a choice. It asks before downloading.",
 
     // ----------------------------------------------------------- common
-    "common.installed": "Installed",
-    "common.missing": "Missing",
-    "common.unknown": "Unknown",
     "common.install": "Install",
     "common.installing": "Installing\u2026",
-    "common.recheck": "Recheck",
     "common.size": "{n} MB",
-    "common.package": "package {name}",
 
     // ----------------------------------------------------- capabilities
     "cap.node.title": "Node.js",
@@ -516,11 +485,6 @@ export const DICT = {
       "Android gives an ordinary app no boot service, so after a restart you have to open Termux before the agent exists. The Termux:Boot app fixes that.",
     "cap.boot.fix": "Install Termux:Boot from F-Droid, then press the button below to write the startup script.",
 
-    "boot.install": "Write the startup script",
-    "boot.installed": "Written. Install the Termux:Boot app from F-Droid and it is done.",
-    "boot.remove": "Stop starting on boot",
-    "boot.removed": "Startup script removed.",
-    "boot.appNote": "The script is in place. It only runs if the Termux:Boot app is installed, which Termux cannot check from the inside.",
 
     "cap.python.title": "Run Python code",
     "cap.python.why": "Without Python the agent can write .py files but never test them.",
@@ -578,6 +542,17 @@ export const DICT = {
     "priv.err.rish_missing": "rish was not found in your home directory. Follow the Shizuku steps above.",
     "priv.err.rish_dead": "rish is present but does not work \u2014 usually the Shizuku app has not been started.",
     "priv.err.no_root": "su did not work. This device is probably not rooted.",
+    "priv.err.no_saved_address": "No ADB address has been saved yet \u2014 this run needs pairing.",
+
+    "boot.reconnect.trying": "Trying the saved ADB address {address}\u2026",
+    "boot.reconnect.ok": "Reconnected to {address} \u2014 no pairing needed.",
+    "boot.reconnect.stale": "{address} no longer works (Android hands out a new port after a reboot).",
+    "boot.privNeeded": "No elevated privileges. Android will kill the agent's child processes mid-task.",
+    "boot.privWhy": "Wireless ADB pairing is a one-time step, and the next start reconnects on its own.",
+    "boot.setupNow": "Pair now?",
+    "boot.skipped": "Skipped. Run `tca adb-setup` whenever you like; the agent works, just weaker.",
+    "boot.noTty": "No keyboard attached (running in the background) \u2014 privileges will be picked up as they appear.",
+    "boot.saved": "Saved {address} so the next start can reconnect by itself.",
 
     // ----------------------------------------------------------- status
     "status.phantom.value": "Child process limit: {n}",
@@ -600,7 +575,6 @@ export const DICT = {
     "app.skipToComposer": "Skip to message composer",
     "app.sections": "Sections",
     "tab.chat": "Chat",
-    "tab.power": "Power",
     "tab.settings": "Settings",
 
     // ---------------------------------------------------------------- wizard
@@ -655,7 +629,6 @@ export const DICT = {
     "chat.deleted": "Session deleted",
     "chat.sessionFallback": "Session {id}",
     "chat.thinking": "thinking",
-    "chat.step": "Step {n}/{of}\u2026",
     "chat.compacting": "The conversation got long. Summarising the older part to fit the context window\u2026",
     "chat.compacted": "Compacted: {before} \u2192 {after} tokens. The older part is still above if you want to read it.",
     "chat.cacheHit": "{n} tokens read from cache",
@@ -774,7 +747,6 @@ export const DICT = {
     "agent.verifyEdits": "Check files after writing",
     "agent.verifyEditsHint":
       "On (recommended): after each write the file is run through whatever checker this project already has — node --check, tsc, ruff, gofmt — and any error goes straight back to the agent, so it finds out immediately that what it wrote does not compile. Costs a second or two per edit.",
-    "agent.maxSteps": "Max steps per turn",
     "agent.instructions": "Extra instructions",
     "agent.instructionsHint": "Appended to the system prompt for every session.",
     "agent.deny": "Denied commands",
@@ -782,7 +754,6 @@ export const DICT = {
 
     // ----------------------------------------------------- short UI notices
     "ui.stopping": "Stopping…",
-    "ui.checking": "Checking…",
     "ui.searching": "Searching…",
     "ui.configReloaded": "Config reloaded from disk",
     "ui.savedTo": "Saved to {path}",
@@ -797,7 +768,6 @@ export const DICT = {
     "ui.noMatch": "Nothing matched. Try a shorter word.",
     "ui.noRecommendations": "No recommendations returned by the server.",
     "ui.noSavedIds": "No saved model ids yet for this provider.",
-    "ui.notTermux": "Not running under Termux — Android-only checks are skipped.",
     "ui.getApiKey": "Get an API key",
     "ui.manualBaseUrl": "needs a manual base URL",
 
@@ -808,35 +778,15 @@ export const DICT = {
     "todo.status.in_progress": "in progress",
     "todo.status.done": "done",
 
-    // ------------------------------------------------------------ Power tab
-    "power.allGood": "Everything in this tier is ready.",
-    "power.installed": "Installed: {title}",
-    "power.installFailed": "Install failed. Details below.",
-    "power.installLog": "Details",
+    // -------------------------------------------------- privileges & setup
     "power.privSection": "Elevated privileges",
     "power.chooseMethod": "Choose how to grant them:",
     "power.step": "Step {n} of {total}",
     "power.applied": "Applied {ok} of {total} unlocks",
     "power.appliedAll": "Unlocked. The agent can spawn as many processes as it needs.",
     "power.appliedSome": "Some unlocks were refused. Some vendors block appops even over ADB; the first one is what matters.",
-    "power.rebootWarn": "Wireless ADB pairing is lost when the phone reboots. Come back here after a restart.",
+    "power.rebootWarn": "A reboot drops the ADB connection, but the address is saved \u2014 the next start reconnects on its own. Only a new port from Android means pairing again.",
 
-    "power.coreOk": "Foundation complete",
-    "power.coreOkNote": "{n} things ready — the install command handled all of it.",
-    "power.repair": "Repair the install ({n})",
-    "power.repairNote":
-      "{n} things the install command should have set up are missing. Usually that means it was interrupted.",
-    "power.installAll": "Install all ({n} · {mb} MB)",
-    "power.confirmSize": "Download about {mb} MB?\n\nIt will use mobile data if you are not on Wi-Fi.",
-    "power.progressTitle": "Installing",
-    "power.progressItem": "{n} of {total} · {title}",
-    "power.phase.download": "downloading…",
-    "power.phase.unpack": "unpacking…",
-    "power.phase.configure": "configuring…",
-    "power.phase.start": "starting…",
-    "power.installedN": "Installed {n} things.",
-    "power.failedAt": "Failed at: {title}",
-    "power.busy": "Another install is already running — wait for it to finish.",
 
     "priv.pair.installAdb": "Install android-tools",
     "priv.pair.s1.title": "Turn on Wireless debugging",
@@ -864,8 +814,6 @@ export const DICT = {
     "priv.shizuku.storageFirst": "Storage permission is needed first. Run termux-setup-storage in Termux.",
 
     "priv.root.check": "Try su",
-    "priv.handledByCli":
-      "Every `nhatnam` looks for privileges and applies them itself. If you grant ADB from another Termux window it will pick that up within 20 seconds - no restart needed.",
   },
 };
 
