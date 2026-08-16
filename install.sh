@@ -90,26 +90,134 @@ apt_broken() {
   return 1
 }
 
+#
+# Termux kiến trúc nào, theo tên mà repo dùng.
+termux_arch() {
+  case "$(uname -m)" in
+    aarch64) echo aarch64 ;;
+    armv7l | armv8l | arm) echo arm ;;
+    i686 | i386) echo i686 ;;
+    x86_64) echo x86_64 ;;
+    *) echo "" ;;
+  esac
+}
+
+#
+# Tự sửa một apt đã chết.
+#
+# Lý do tồn tại: mục tiêu của dự án này là MỘT lệnh rồi gõ `nhatnam` là chạy. Một
+# script cài chỉ biết bó tay nói "apt hỏng rồi, tự đi sửa đi" thì đã phá mất
+# chính lời hứa đó. Và tình huống này không hiếm: `pkg upgrade` đứt giữa
+# transaction là chuyện xảy ra thật, chỉ cần mất mạng giữa đường hoặc mirror lệch
+# nhau là đủ.
+#
+# Chuỗi sửa, rẻ trước đắt sau:
+#
+#   1. Còn file .so không? Thường libX.so.1.2.3 vẫn nằm đó và chỉ mất symlink
+#      soname libX.so.1. Tạo lại link là xong — không cần mạng, không cần gì cả.
+#   2. Không còn thì tải .deb về và đặt bằng dpkg. dpkg KHÔNG link tới libapt-pkg
+#      nên nó thường vẫn sống khi apt đã chết; đường dẫn .deb tra từ chính file
+#      Packages của repo, để không phải đoán tên hay số phiên bản.
+#
+# Chỉ chạy khi apt đã xác nhận hỏng, nên không có gì để làm hỏng thêm.
+repair_broken_apt() {
+  local attempt lib sofile pkg arch index deb url tmp
+  tmp="${TMPDIR:-/tmp}/tca-aptfix.$$"
+  mkdir -p "$tmp" || return 1
+
+  # Sửa được thư viện này thì linker có thể lộ ra thư viện thiếu tiếp theo, nên
+  # lặp — nhưng có giới hạn, vì một prefix vỡ quá nhiều thì dựng lại nhanh hơn.
+  for attempt in 1 2 3 4; do
+    apt_broken || { rm -rf "$tmp"; return 0; }
+
+    lib="$(apt-get --version 2>&1 | sed -n 's/.*library "\([^"]*\)" not found.*/\1/p' | head -1)"
+    [ -n "$lib" ] || break
+    info "thiếu thư viện $lib — đang thử tự sửa (lần $attempt)"
+
+    # (1) Chỉ mất symlink.
+    sofile="$(ls -1 "$PREFIX/lib/$lib".* 2>/dev/null | head -1)"
+    if [ -z "$sofile" ] && [ -e "$PREFIX/lib/${lib%%.so*}.so" ]; then
+      sofile="$PREFIX/lib/${lib%%.so*}.so"
+    fi
+    if [ -n "$sofile" ] && [ ! -e "$PREFIX/lib/$lib" ]; then
+      ln -sf "$sofile" "$PREFIX/lib/$lib" 2>/dev/null &&
+        ok "đã tạo lại symlink $lib -> $(basename "$sofile")"
+      continue
+    fi
+
+    # (2) Tải gói về và đặt bằng dpkg.
+    if ! command -v dpkg >/dev/null 2>&1 || ! dpkg --version >/dev/null 2>&1; then
+      warn "dpkg cũng không chạy được, không tự sửa tiếp được"
+      break
+    fi
+    arch="$(termux_arch)"
+    if [ -z "$arch" ]; then
+      warn "không nhận ra kiến trúc $(uname -m)"
+      break
+    fi
+
+    pkg="${lib%%.so*}"
+    index="$tmp/Packages"
+    if [ ! -s "$index" ]; then
+      info "đang tải danh sách gói để tìm $pkg…"
+      curl -fsSL --retry 2 --connect-timeout 20 \
+        "https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-$arch/Packages.gz" \
+        2>/dev/null | gzip -dc >"$index" 2>/dev/null || true
+    fi
+    if [ ! -s "$index" ]; then
+      warn "không tải được danh sách gói (mạng?)"
+      break
+    fi
+
+    # Khối của gói này trong Packages, rồi lấy trường Filename. awk vì đây là
+    # định dạng theo khối cách nhau bằng dòng trắng, không phải theo dòng.
+    #
+    # Thử cả hai quy ước tên: Termux có gói 'liblz4' nhưng lại có gói 'zstd' chứ
+    # không phải 'libzstd', nên đoán một kiểu thôi là sẽ trượt.
+    deb=""
+    for pkg in "${lib%%.so*}" "${lib#lib}"; do
+      pkg="${pkg%%.so*}"
+      deb="$(awk -v p="$pkg" '
+        /^Package: /   { cur = $2 }
+        /^Filename: /  { if (cur == p) { print $2; exit } }
+      ' "$index")"
+      [ -n "$deb" ] && break
+    done
+    if [ -z "$deb" ]; then
+      warn "không thấy gói nào cung cấp $lib trong danh sách"
+      break
+    fi
+
+    url="https://packages.termux.dev/apt/termux-main/$deb"
+    info "đang tải $pkg…"
+    if ! curl -fsSL --retry 2 --connect-timeout 20 -o "$tmp/pkg.deb" "$url" 2>/dev/null; then
+      warn "tải $pkg thất bại"
+      break
+    fi
+    if dpkg -i --force-confold "$tmp/pkg.deb" >/dev/null 2>&1; then
+      ok "đã đặt lại $pkg"
+    else
+      warn "dpkg không đặt được $pkg"
+      break
+    fi
+  done
+
+  rm -rf "$tmp"
+  apt_broken && return 1
+  return 0
+}
+
 die_apt_broken() {
-  echo -e "\n${RED}✗ apt của Termux đã hỏng. Đây không phải lỗi của dự án này.${RESET}" >&2
+  echo -e "\n${RED}✗ apt của Termux đã hỏng, và tự sửa không được.${RESET}" >&2
   apt-get --version 2>&1 | head -1 | sed 's/^/    /' >&2
   cat >&2 <<'DIAG'
 
   Một lần `pkg upgrade` đã đứt giữa đường: libapt-pkg lên bản mới nhưng thư viện
   nó cần thì chưa. Không sửa được bằng pkg hay apt, vì chính chúng đã chết.
 
-  Thử cái rẻ nhất trước — thường chỉ là mất symlink soname:
-
-    ls -la $PREFIX/lib/liblz4*
-
-  Nếu có liblz4.so.1.X.Y mà không có liblz4.so.1 thì tạo lại link:
-
-    ln -sf $PREFIX/lib/liblz4.so.1.X.Y $PREFIX/lib/liblz4.so.1
-    apt-get --version
-
-  Không còn file nào để link thì dựng lại bootstrap: Cài đặt Android > Ứng dụng
-  > Termux > Bộ nhớ > Xoá dữ liệu, mở Termux lại (nó tự bung bootstrap mới), rồi
-  chạy lại lệnh cài một dòng.
+  Cách chắc chắn nhất là dựng lại bootstrap: Cài đặt Android > Ứng dụng > Termux
+  > Bộ nhớ > Xoá dữ liệu, mở Termux lại (nó tự bung bootstrap mới), rồi chạy lại
+  lệnh cài một dòng. Chỉ mất khoảng một phút.
 
   Nếu Termux tải từ Google Play: gỡ và cài lại từ F-Droid. Bản trên Play đã bị bỏ
   từ lâu và vỡ đúng kiểu này mỗi lần nâng cấp.
@@ -138,7 +246,7 @@ if in_termux; then
   # Trước khi làm gì khác. Đi tiếp trên một apt đã chết chỉ sinh ra một chuỗi lỗi
   # phái sinh vô nghĩa — "không có gói 'nodejs' trong repo này" khi gói vẫn còn
   # đó, chỉ là apt không đọc được danh sách nữa.
-  apt_broken && die_apt_broken
+  apt_broken && { repair_broken_apt || die_apt_broken; }
 
   # Hoàn tất gói cài dở từ lần trước (no-op nếu không có gì dở dang).
   dpkg --configure -a --force-confold >/dev/null 2>&1 || true
@@ -161,7 +269,7 @@ if in_termux; then
 
   # Kiểm ngay tại đây, vì đây đúng là chỗ apt hay tự giết mình. Bắt ở đây thì
   # thông báo còn dính liền với bước vừa gây ra nó.
-  apt_broken && die_apt_broken
+  apt_broken && { repair_broken_apt || die_apt_broken; }
 
   if [ "$upgrade_rc" -ne 0 ]; then
     echo -e "\n${RED}✗ Nâng cấp hệ thống thất bại (mã $upgrade_rc).${RESET}" >&2
@@ -232,7 +340,7 @@ DIAG
   command -v git >/dev/null 2>&1 || missing+=(git)
   if [ ${#missing[@]} -gt 0 ]; then
     echo -e "\n${RED}✗ Thiếu gói bắt buộc sau khi cài: ${missing[*]}${RESET}" >&2
-    apt_broken && die_apt_broken
+    apt_broken && { repair_broken_apt || die_apt_broken; }
     echo "  Chạy tay để xem apt nói gì:  pkg install ${missing[*]}" >&2
     exit 1
   fi

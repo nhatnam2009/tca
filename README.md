@@ -42,6 +42,27 @@ them in that order. If you have already hit it, repair with:
 pkg upgrade -y -o Dpkg::Options::=--force-confold
 ```
 
+The worse version of the same problem is when the interrupted upgrade takes *apt
+itself* with it — `libapt-pkg` lands on a version needing `liblz4.so.1` while
+`liblz4` does not, and from then on nothing can be installed, including the fix:
+
+```
+CANNOT LINK EXECUTABLE "apt": library "liblz4.so.1" not found
+```
+
+`install.sh` detects this before it does anything else, and again immediately after
+the upgrade, which is where apt tends to kill itself. Then it repairs it, cheapest
+first: usually only the soname symlink is missing and the versioned `.so` is still
+there, which needs no network at all. Failing that it reads the repo's own
+`Packages` index to find the exact `.deb` — no guessing at names or versions — and
+places it with `dpkg`, which survives because it does not link `libapt-pkg`. Only
+if both fail does it stop, and then it says to clear Termux's data and let the app
+re-extract a fresh bootstrap.
+
+That matters more than it sounds: the whole promise here is one command and then
+`nhatnam`. An installer that can only report "apt is broken, go fix it yourself"
+has already broken that promise.
+
 It installs the packages, clones into `~/tca`, creates the `tca` and `nhatnam`
 commands, asks Android for storage permission, sets up a service so the daemon
 survives being killed, and stops. It asks no questions: everything interactive
