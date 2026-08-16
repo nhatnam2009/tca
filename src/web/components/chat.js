@@ -276,13 +276,12 @@ export function bindEvents({ onSend, onAbort, onToggleMode, onOpenSettings, onUn
 
   async function loadSlashCommands() {
     try {
-      const res = await api.get("/api/slash-commands");
+      const res = await api("/api/slash-commands");
       if (res && res.commands) slashCommands = res.commands;
     } catch {
       // ignore
     }
   }
-  loadSlashCommands();
 
   const hintsEl = $("slash-hints");
   function hideSlashHints() {
@@ -331,10 +330,11 @@ export function bindEvents({ onSend, onAbort, onToggleMode, onOpenSettings, onUn
   }
 
   if (ta) {
-    ta.addEventListener("input", () => {
+    ta.addEventListener("input", async () => {
       autogrow();
       const val = ta.value;
       if (val.startsWith("/")) {
+        if (!slashCommands.length) await loadSlashCommands();
         const match = val.match(/^\/([a-zA-Z0-9_-]*)$/);
         if (match) {
           const prefix = match[1].toLowerCase();
