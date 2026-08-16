@@ -129,14 +129,14 @@ export class Runner {
   }
 
   /** Ask the UI, block this tool call until an answer arrives. */
-  approve = ({ command, cwd, reason }) => {
+  approve = ({ command, cwd, reason, kind = "command" }) => {
     const id = `ap_${++this.seq}`;
-    this.emit({ type: "approval_request", id, command, cwd, reason });
+    this.emit({ type: "approval_request", id, kind, command, cwd, reason });
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(id)) {
           this.emit({ type: "approval_closed", id, outcome: "timeout" });
-          this.emit({ type: "tool_note", text: "Approval timed out after 10 minutes; the command was not run." });
+          this.emit({ type: "tool_note", text: "Approval timed out after 10 minutes; nothing was run or changed." });
           resolve(false);
         }
       }, APPROVAL_TIMEOUT);
@@ -164,6 +164,7 @@ export class Runner {
     const ctx = {
       workspace,
       autoApproveCommands: this.config.autoApproveCommands,
+      autoApproveEdits: this.config.autoApproveEdits !== false,
       denyCommands: this.config.denyCommands,
       approve: this.approve,
       signal: this.controller.signal,

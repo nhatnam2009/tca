@@ -607,3 +607,105 @@ test("the UI handles every event the daemon can emit", async () => {
   const unhandled = [...emitted].filter((t) => !handled.has(t)).sort();
   assert.deepEqual(unhandled, [], `app.js has no case for: ${unhandled.join(", ")}`);
 });
+
+test("autoApproveEdits false makes every file-writing tool ask first", async () => {
+  /** @type {any[]} */
+  const asked = [];
+  const base = {
+    workspace: WORKSPACE,
+    autoApproveCommands: true,
+    autoApproveEdits: false,
+    approve: async (req) => {
+      asked.push(req);
+      return true;
+    },
+  };
+  fs.writeFileSync(path.join(WORKSPACE, "gated.txt"), "one\ntwo\n");
+
+  const calls = [
+    ["write_file", { path: "gated-new.txt", content: "x\n" }],
+    ["edit_file", { path: "gated.txt", old_string: "one", new_string: "ONE" }],
+    ["patch_file", { path: "gated.txt", diff: "@@ -1,1 +1,1 @@\n-ONE\n+1" }],
+    ["move_file", { src: "gated-new.txt", dst: "gated-moved.txt" }],
+    ["delete_file", { path: "gated-moved.txt" }],
+  ];
+  for (const [name, input] of calls) {
+    const r = await callTool(name, input, base);
+    assert.equal(r.ok, true, `${name}: ${r.output}`);
+  }
+  assert.deepEqual(
+    asked.map((a) => a.command.split(/\s+/)[0]),
+    ["write_file", "edit_file", "patch_file", "move_file", "delete_file"],
+  );
+  assert.ok(asked.every((a) => a.kind === "edit"), "the UI needs kind=edit to label the card");
+
+  // Read-only tools must never ask.
+  asked.length = 0;
+  await callTool("read_file", { path: "gated.txt" }, base);
+  await callTool("list_dir", {}, base);
+  assert.deepEqual(asked, []);
+});
+
+test("a denied file change is reported, and the file is untouched", async () => {
+  const ctx = {
+    workspace: WORKSPACE,
+    autoApproveCommands: true,
+    autoApproveEdits: false,
+    approve: async () => false,
+  };
+  const file = path.join(WORKSPACE, "denied.txt");
+  fs.writeFileSync(file, "keep me\n");
+
+  const r = await callTool("delete_file", { path: "denied.txt" }, ctx);
+  assert.equal(r.ok, false);
+  assert.match(r.output, /denied this file change/i);
+  assert.equal(fs.readFileSync(file, "utf8"), "keep me\n");
+  assert.equal(fs.existsSync(file), true);
+});
+
+test("edits default to allowed, so old configs keep working", async () => {
+  // No autoApproveEdits key at all: must behave exactly as before the option.
+  const ctx = {
+    workspace: WORKSPACE,
+    autoApproveCommands: true,
+    approve: async () => {
+      throw new Error("must not ask");
+    },
+  };
+  const r = await callTool("write_file", { path: "legacy.txt", content: "fine\n" }, ctx);
+  assert.equal(r.ok, true, r.output);
+});
+
+test("write, edit and patch report what actually changed as a diff", async () => {
+  const ctx = { workspace: WORKSPACE, autoApproveCommands: true, approve: async () => true };
+  const file = path.join(WORKSPACE, "diffed.txt");
+
+  // Creating a file has nothing to diff against.
+  const created = await callTool("write_file", { path: "diffed.txt", content: "a\nb\nc\n" }, ctx);
+  assert.equal(created.ok, true, created.output);
+  assert.doesNotMatch(created.output, /^@@/m);
+
+  const edited = await callTool("edit_file", { path: "diffed.txt", old_string: "b", new_string: "B" }, ctx);
+  assert.equal(edited.ok, true, edited.output);
+  assert.match(edited.output, /^@@ -2,1 \+2,1 @@/m, edited.output);
+  assert.match(edited.output, /^-b$/m);
+  assert.match(edited.output, /^\+B$/m);
+
+  const overwritten = await callTool("write_file", { path: "diffed.txt", content: "a\nB\nc\nd\n" }, ctx);
+  assert.equal(overwritten.ok, true, overwritten.output);
+  assert.match(overwritten.output, /^\+d$/m, overwritten.output);
+
+  const patched = await callTool(
+    "patch_file",
+    { path: "diffed.txt", diff: "@@ -1,1 +1,1 @@\n-a\n+A" },
+    ctx,
+  );
+  assert.equal(patched.ok, true, patched.output);
+  assert.match(patched.output, /^-a$/m);
+  assert.match(patched.output, /^\+A$/m);
+  assert.equal(fs.readFileSync(file, "utf8"), "A\nB\nc\nd\n");
+
+  // Rewriting identical content must say so rather than print an empty diff.
+  const same = await callTool("write_file", { path: "diffed.txt", content: "A\nB\nc\nd\n" }, ctx);
+  assert.match(same.output, /already identical/i);
+});

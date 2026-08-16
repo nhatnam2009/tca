@@ -52,8 +52,9 @@ export class ToolError extends Error {}
  * @typedef {object} ToolContext
  * @property {string} workspace                     absolute, already created
  * @property {boolean} autoApproveCommands
+ * @property {boolean} [autoApproveEdits]           false = confirm every file write
  * @property {string[]} [denyCommands]              extra regex sources
- * @property {(req: {command: string, cwd: string, reason: string}) => Promise<boolean>} approve
+ * @property {(req: {command: string, cwd: string, reason: string, kind?: "command"|"edit"}) => Promise<boolean>} approve
  * @property {AbortSignal} [signal]
  */
 
@@ -258,6 +259,54 @@ export function applyUnifiedDiff(original, diff) {
   return { text, applied: hunks.length, shifted };
 }
 
+/**
+ * A compact unified diff of what a write actually changed.
+ *
+ * Deliberately not a real LCS diff: it trims the common prefix and suffix and
+ * reports the middle as one hunk. That is O(n), which matters on a phone, and it
+ * covers the shape of an edit_file/patch_file change well. The result goes back
+ * to the model too, so it can see the effect of its own edit.
+ * @param {string} before
+ * @param {string} after
+ * @param {number} [maxLines]
+ * @returns {string} "" when the two are identical
+ */
+export function changeSummary(before, after, maxLines = 40) {
+  if (before === after) return "";
+  const a = before.replace(/\r\n?/g, "\n").split("\n");
+  const b = after.replace(/\r\n?/g, "\n").split("\n");
+
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) {
+    tail++;
+  }
+
+  const removed = a.slice(head, a.length - tail);
+  const added = b.slice(head, b.length - tail);
+  const CONTEXT = 2;
+  const ctxBefore = a.slice(Math.max(0, head - CONTEXT), head);
+  const ctxAfter = a.slice(a.length - tail, Math.min(a.length, a.length - tail + CONTEXT));
+
+  /** @type {string[]} */
+  const out = [`@@ -${head + 1},${removed.length} +${head + 1},${added.length} @@`];
+  for (const l of ctxBefore) out.push(` ${l}`);
+  let shown = 0;
+  for (const l of removed) {
+    if (shown++ >= maxLines) break;
+    out.push(`-${l}`);
+  }
+  for (const l of added) {
+    if (shown++ >= maxLines) break;
+    out.push(`+${l}`);
+  }
+  const hidden = removed.length + added.length - Math.min(shown, maxLines);
+  for (const l of ctxAfter) out.push(` ${l}`);
+  if (hidden > 0) out.push(`[... ${hidden} more changed line(s) ...]`);
+  return out.join("\n");
+}
+
 // -------------------------------------------------------------------- the tools
 
 /** @type {Record<string, {spec: import("./provider.js").ToolSpec, run: (args: any, ctx: ToolContext) => Promise<string>}>} */
@@ -315,10 +364,13 @@ export const TOOLS = {
       const abs = resolveInside(ctx, p);
       if (typeof content !== "string") throw new ToolError("content must be a string");
       await fsp.mkdir(path.dirname(abs), { recursive: true });
-      const existed = fs.existsSync(abs);
+      const previous = await fsp.readFile(abs, "utf8").catch(() => null);
       await fsp.writeFile(abs, content, "utf8");
       const lines = content ? content.replace(/\n$/, "").split("\n").length : 0;
-      return `${existed ? "Overwrote" : "Created"} ${p} (${lines} lines, ${content.length} bytes)`;
+      if (previous === null) return `Created ${p} (${lines} lines, ${content.length} bytes)`;
+      const diff = changeSummary(previous, content);
+      const head = `Overwrote ${p} (${lines} lines, ${content.length} bytes)`;
+      return diff ? `${head}\n${diff}` : `${head}\n[content was already identical]`;
     },
   },
 
@@ -353,7 +405,10 @@ export const TOOLS = {
       }
       const next = replace_all ? text.split(old_string).join(new_string) : text.replace(old_string, new_string);
       await fsp.writeFile(abs, next, "utf8");
-      return `Edited ${p} (${replace_all ? count : 1} replacement${count > 1 && replace_all ? "s" : ""})`;
+      const n = replace_all ? count : 1;
+      const head = `Edited ${p} (${n} replacement${n > 1 ? "s" : ""})`;
+      const diff = changeSummary(text, next);
+      return diff ? `${head}\n${diff}` : head;
     },
   },
 
@@ -499,7 +554,7 @@ export const TOOLS = {
         const reason = WRITES_OUTSIDE.test(command)
           ? "installs or removes packages outside the workspace"
           : "runs a shell command";
-        const ok = await ctx.approve({ command, cwd: dir, reason });
+        const ok = await ctx.approve({ kind: "command", command, cwd: dir, reason });
         if (!ok) throw new ToolError("the user denied this command");
       }
 
@@ -611,7 +666,9 @@ export const TOOLS = {
       const { text, applied, shifted } = applyUnifiedDiff(original, String(diff));
       await fsp.writeFile(abs, text, "utf8");
       const note = shifted ? ` (${shifted} hunk(s) matched at a shifted line number)` : "";
-      return `Applied ${applied} hunk(s) to ${p}${note}`;
+      const summary = changeSummary(original, text);
+      const head = `Applied ${applied} hunk(s) to ${p}${note}`;
+      return summary ? `${head}\n${summary}` : head;
     },
   },
 
@@ -782,6 +839,25 @@ export function toolSpecs() {
 }
 
 /**
+ * Tools that change the filesystem. Gated by autoApproveEdits, and gated in one
+ * place rather than five so a new write tool cannot forget to ask.
+ * @type {Record<string, (input: any) => {what: string, reason: string}>}
+ */
+const EDIT_TOOLS = {
+  write_file: (i) => ({
+    what: `write_file  ${i?.path}`,
+    reason: "creates the file, or replaces its entire contents",
+  }),
+  edit_file: (i) => ({
+    what: `edit_file  ${i?.path}`,
+    reason: i?.replace_all ? "replaces every occurrence of a string" : "replaces a string in the file",
+  }),
+  patch_file: (i) => ({ what: `patch_file  ${i?.path}`, reason: "applies a diff to the file" }),
+  move_file: (i) => ({ what: `move_file  ${i?.src} -> ${i?.dst}`, reason: "moves or renames it" }),
+  delete_file: (i) => ({ what: `delete_file  ${i?.path}`, reason: "deletes the file permanently" }),
+};
+
+/**
  * Execute one tool call.
  * @param {string} name
  * @param {any} input
@@ -795,6 +871,13 @@ export async function callTool(name, input, ctx) {
     return { ok: false, output: `could not parse your arguments as JSON: ${input.__raw?.slice(0, 200)}` };
   }
   try {
+    // Explicit false only: a ToolContext built without the flag (older configs,
+    // direct callers) keeps the previous behaviour of not asking.
+    if (ctx.autoApproveEdits === false && EDIT_TOOLS[name]) {
+      const { what, reason } = EDIT_TOOLS[name](input || {});
+      const ok = await ctx.approve({ kind: "edit", command: what, cwd: ctx.workspace, reason });
+      if (!ok) throw new ToolError("the user denied this file change");
+    }
     return { ok: true, output: await tool.run(input || {}, ctx) };
   } catch (err) {
     const e = /** @type {Error} */ (err);

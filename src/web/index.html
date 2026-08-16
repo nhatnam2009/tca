@@ -552,6 +552,20 @@
               command. On: it runs commands immediately, without asking.
             </p>
 
+            <div class="check">
+              <input
+                id="cfg-autoapprove-edits"
+                type="checkbox"
+                aria-describedby="autoapprove-edits-hint"
+              />
+              <label for="cfg-autoapprove-edits">Auto-approve file changes</label>
+            </div>
+            <p id="autoapprove-edits-hint" class="muted small">
+              On (default): the agent writes, edits, moves and deletes files in the
+              workspace without asking. Turn it off to confirm each change &mdash;
+              safer, but a lot of tapping.
+            </p>
+
             <label for="cfg-maxsteps">Max steps per turn</label>
             <input
               id="cfg-maxsteps"

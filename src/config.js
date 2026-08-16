@@ -42,6 +42,7 @@ import os from "node:os";
  * @property {Record<string, ProviderConfig>} providers
  * @property {string} workspace                     agent is confined to this dir
  * @property {boolean} autoApproveCommands
+ * @property {boolean} [autoApproveEdits]           false = confirm every file write
  * @property {string[]} [denyCommands]              extra regexes, always blocked
  * @property {number} [maxSteps]
  * @property {number} [port]
@@ -77,6 +78,10 @@ export function defaultConfig() {
     active: "",
     workspace: path.join(HOME, "projects"),
     autoApproveCommands: false,
+    // Edits default to allowed: workspace confinement already bounds the damage,
+    // and tapping Allow for every write on a phone makes the agent unusable.
+    // Turn it off in Settings when pointing the agent at something you care about.
+    autoApproveEdits: true,
     maxSteps: 40,
     port: 8787,
     instructions: "",

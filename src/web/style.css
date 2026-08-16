@@ -1262,3 +1262,29 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
   border-color: color-mix(in srgb, var(--warn) 55%, var(--border));
   color: var(--warn);
 }
+
+/* --------------------------------------------------------- diff highlighting */
+
+/* Tool output from write_file / edit_file / patch_file carries a unified-diff
+   hunk. Colour is on a <span> per line; the text is still a text node. */
+pre.diff code {
+  display: block;
+}
+.diff-meta {
+  display: block;
+  color: var(--muted);
+}
+.diff-add {
+  display: block;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.diff-del {
+  display: block;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.diff-ctx {
+  display: block;
+  color: var(--fg);
+}

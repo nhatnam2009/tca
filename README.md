@@ -122,11 +122,15 @@ Three rails, and the tests in `test/agent.test.mjs` cover all of them:
   reported back to the model as a tool error, so it adapts instead of crashing.
   If you never answer, the card expires after 10 minutes and says so; pressing
   Stop closes it too.
+- **File changes** are allowed by default, because tapping Allow for every write
+  on a phone makes the agent unusable and workspace confinement already bounds
+  the damage. Set `autoApproveEdits: false` (Settings → "Auto-approve file
+  changes") and `write_file`, `edit_file`, `patch_file`, `move_file` and
+  `delete_file` each ask first. Either way the tool output contains a diff of
+  what changed, so you can see it after the fact.
 
-Note what this does *not* cover: the file tools (`write_file`, `edit_file`,
-`patch_file`, `move_file`, `delete_file`) are not approval-gated. Workspace
-confinement is the only thing standing between the model and your files, so point
-`workspace` at a directory you would be willing to `git checkout --` .
+Point `workspace` at a directory under git. Then a bad edit is one
+`git checkout --` away, which is a better safety net than any prompt.
 
 The daemon binds `127.0.0.1` only, and refuses any other host. That is necessary
 but **not sufficient on Android**: the platform does not isolate localhost between
@@ -180,7 +184,9 @@ list_dir   tree        glob        grep       run_command read_url
 
 `edit_file` replaces one exact string and refuses an ambiguous match.
 `patch_file` applies a unified diff and refuses a stale one rather than
-scrambling the file. Only `run_command` goes through the approval prompt.
+scrambling the file. `write_file`, `edit_file` and `patch_file` return a diff of
+what they changed, coloured in the UI. Only `run_command` always asks for
+approval; file changes ask only when `autoApproveEdits` is off.
 
 ## Layout
 
@@ -206,7 +212,7 @@ test/agent.test.mjs  end-to-end against a fake provider
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 17 tests, no network or API key needed
+node --test test/*.test.mjs     # 22 tests, no network or API key needed
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```
 

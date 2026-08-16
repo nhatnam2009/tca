@@ -170,8 +170,9 @@ async function cmdRun(text) {
   });
 
   // Terminal approval instead of the web card.
-  runner.approve = async ({ command, cwd }) => {
-    process.stdout.write(`\n  run this? ${command}\n  in ${cwd}\n`);
+  runner.approve = async ({ command, cwd, reason, kind = "command" }) => {
+    const verb = kind === "edit" ? "allow this file change?" : "run this?";
+    process.stdout.write(`\n  ${verb} ${command}\n  ${reason} (in ${cwd})\n`);
     const answer = (await rl.question("  [y/N] ")).trim().toLowerCase();
     return answer === "y" || answer === "yes";
   };

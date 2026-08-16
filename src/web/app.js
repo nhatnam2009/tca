@@ -411,6 +411,36 @@ function pre(text) {
   return p;
 }
 
+/** True for tool output that carries a unified-diff hunk from write/edit/patch. */
+function looksLikeDiff(text) {
+  return typeof text === "string" && /^@@ -\d+,\d+ \+\d+,\d+ @@/m.test(text);
+}
+
+/**
+ * Same as pre(), but each line of a diff gets a colour. Still one text node per
+ * line - no innerHTML, because this is file content the model chose.
+ */
+function diffPre(text) {
+  const p = el("pre", "diff");
+  p.tabIndex = 0;
+  const code = el("code");
+  for (const line of String(text).split("\n")) {
+    const c = line[0];
+    const cls =
+      line.startsWith("@@") ? "diff-meta"
+      : c === "+" ? "diff-add"
+      : c === "-" ? "diff-del"
+      : c === "[" ? "diff-meta"
+      : "diff-ctx";
+    code.appendChild(el("span", cls, `${line}\n`));
+  }
+  p.appendChild(code);
+  return p;
+}
+
+/** pre() or diffPre(), whichever suits the text. */
+const outputBlock = (text) => (looksLikeDiff(text) ? diffPre(text) : pre(text));
+
 /** Render assistant text (markdown) into a container. */
 function renderRich(container, raw) {
   container.textContent = "";
@@ -562,18 +592,24 @@ function finishToolRow(handle, ok, output) {
   handle.badge.textContent = ok ? "ok" : "error";
   handle.badge.classList.add(ok ? "ok" : "bad");
   if (!ok) handle.row.classList.add("bad");
-  handle.body.append(el("p", "tool-label", "output"), pre(output));
+  handle.body.append(el("p", "tool-label", "output"), outputBlock(output));
+  // A file change is the interesting part of a turn: show the diff without a tap.
+  if (ok && looksLikeDiff(output)) handle.row.open = true;
 }
 
 /** Inline approval card with Allow / Deny, posted to /api/approvals/:id. */
 function approvalCard(ev) {
+  const isEdit = ev.kind === "edit";
   const card = el("section", "approval");
   card.setAttribute("role", "group");
-  card.setAttribute("aria-label", "Command approval request");
+  card.setAttribute("aria-label", isEdit ? "File change approval request" : "Command approval request");
   card.tabIndex = -1;
-  card.append(el("p", "approval-title", "Approval required"), pre(ev.command ?? ""));
-  if (ev.cwd) card.appendChild(el("p", "muted small", `cwd: ${ev.cwd}`));
+  card.append(
+    el("p", "approval-title", isEdit ? "Allow this file change?" : "Run this command?"),
+    pre(ev.command ?? ""),
+  );
   if (ev.reason) card.appendChild(el("p", "small", String(ev.reason)));
+  if (ev.cwd) card.appendChild(el("p", "muted small", `${isEdit ? "workspace" : "cwd"}: ${ev.cwd}`));
 
   const allow = el("button", "btn primary grow", "Allow");
   const deny = el("button", "btn danger grow", "Deny");
@@ -612,7 +648,7 @@ function approvalCard(ev) {
   scrollToBottom();
   // The turn is blocked until this is answered, so it must be impossible to
   // miss: announce it, and move focus so a screen reader lands on it.
-  toast("Approval required to run a command", "warn");
+  toast(isEdit ? "Approval required to change a file" : "Approval required to run a command", "warn");
   try { card.focus({ preventScroll: true }); } catch { card.focus(); }
   return card;
 }
@@ -961,6 +997,8 @@ function fillSettings() {
   sel.value = provId;
   $("cfg-workspace").value = cfg.workspace || "";
   $("cfg-autoapprove").checked = Boolean(cfg.autoApproveCommands);
+  // Absent in configs written before this option existed, and the default is on.
+  $("cfg-autoapprove-edits").checked = cfg.autoApproveEdits !== false;
   $("cfg-maxsteps").value = cfg.maxSteps ?? 40;
   $("cfg-instructions").value = cfg.instructions || "";
   $("cfg-deny").value = (cfg.denyCommands || []).join("\n");
@@ -1196,6 +1234,7 @@ function readSettings() {
   cfg.active = provId;
   cfg.workspace = $("cfg-workspace").value.trim();
   cfg.autoApproveCommands = $("cfg-autoapprove").checked;
+  cfg.autoApproveEdits = $("cfg-autoapprove-edits").checked;
   cfg.maxSteps = Number($("cfg-maxsteps").value) || 40;
   cfg.instructions = $("cfg-instructions").value;
   cfg.denyCommands = $("cfg-deny").value.split("\n").map((s) => s.trim()).filter(Boolean);
