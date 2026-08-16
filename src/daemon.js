@@ -21,6 +21,7 @@ import { createSession, listSessions, getSession, deleteSession } from "./store.
 import { Runner } from "./loop.js";
 import { getStatus } from "./status.js";
 import { DICT, LANGS, DEFAULT_LANG } from "./i18n.js";
+import { discoverOrCache } from "./discover.js";
 
 const WEB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "web");
 const VERSION = "0.1.0";
@@ -238,6 +239,18 @@ export async function serve(opts = {}) {
       const body = await readJson(req);
       const result = addProvider(body);
       return json(res, 200, { ok: true, ...result });
+    }
+    const discoverMatch = pathname.match(/^\/api\/providers\/([A-Za-z0-9_-]+)\/discover$/);
+    if (method === "POST" && discoverMatch) {
+      const provId = discoverMatch[1];
+      const body = await readJson(req).catch(() => ({}));
+      const { config } = loadConfig();
+      const savedProvider = config.providers[provId];
+      const apiKey = body.apiKey || savedProvider?.apiKey || "";
+      const baseUrl = body.baseUrl || savedProvider?.baseUrl || "";
+      const force = Boolean(body.force);
+      const models = await discoverOrCache(provId, { apiKey, baseUrl, force });
+      return json(res, 200, { ok: true, provider: provId, models });
     }
     if (method === "POST" && pathname === "/api/providers/test") {
       const body = await readJson(req);

@@ -445,6 +445,7 @@ export function wire() {
       appState.provId = id;
       Settings.fillProvider(appState.cfg, appState.provId);
     },
+    onKeyInput: () => Settings.scheduleKeyDiscovery(appState.provId, appState.cfg),
     onAddProvider: () => {
       Wizard.enterWizard({ returnTo: "settings" }, {
         showViewFn: showView,

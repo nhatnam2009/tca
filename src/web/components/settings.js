@@ -240,13 +240,20 @@ export async function testActiveProvider(provId) {
 export async function refreshLiveModels(provId, cfg) {
   const btn = $("btn-refresh-live");
   const note = $("model-picker-note");
+  const keyInput = $("prov-apikey");
+  const baseInput = $("prov-baseurl");
+  const apiKey = keyInput && keyInput.value ? keyInput.value.trim() : (cfg && cfg.providers && cfg.providers[provId] && cfg.providers[provId].apiKey) || "";
+  const baseUrl = baseInput && baseInput.value ? baseInput.value.trim() : (cfg && cfg.providers && cfg.providers[provId] && cfg.providers[provId].baseUrl) || "";
   if (btn) btn.disabled = true;
   if (note) {
     note.className = "muted small";
     note.textContent = "Asking the provider\u2026";
   }
   try {
-    const res = await api(`/api/models/live?provider=${encodeURIComponent(provId || "")}`);
+    const res = await api(`/api/providers/${encodeURIComponent(provId || "")}/discover`, {
+      method: "POST",
+      body: { apiKey, baseUrl, force: true },
+    });
     const models = (res && res.models) || [];
     await fillModelPicker(provId, cfg, {
       models,
@@ -263,6 +270,32 @@ export async function refreshLiveModels(provId, cfg) {
     if (btn) btn.disabled = false;
   }
 }
+
+let keyDebounceTimer = null;
+export function scheduleKeyDiscovery(provId, cfg, onDiscovered) {
+  clearTimeout(keyDebounceTimer);
+  keyDebounceTimer = setTimeout(async () => {
+    const keyInput = $("prov-apikey");
+    const baseInput = $("prov-baseurl");
+    const apiKey = keyInput && keyInput.value ? keyInput.value.trim() : "";
+    const baseUrl = baseInput && baseInput.value ? baseInput.value.trim() : "";
+    if (!apiKey) return;
+    try {
+      const res = await api(`/api/providers/${encodeURIComponent(provId || "")}/discover`, {
+        method: "POST",
+        body: { apiKey, baseUrl, force: false },
+      });
+      const models = (res && res.models) || [];
+      if (models.length > 0) {
+        await fillModelPicker(provId, cfg, { models });
+        if (typeof onDiscovered === "function") onDiscovered(models);
+      }
+    } catch {
+      // Non-fatal discovery fallback
+    }
+  }, 500);
+}
+
 
 export function scheduleModelSearch(query, onSelectHit) {
   clearTimeout(searchTimer);
@@ -385,7 +418,10 @@ export function bindEvents({
   }
   const keyInput = $("prov-apikey");
   if (keyInput) {
-    keyInput.addEventListener("input", (e) => delete e.target.dataset.keep);
+    keyInput.addEventListener("input", (e) => {
+      delete e.target.dataset.keep;
+      if (onKeyInput) onKeyInput(e.target.value);
+    });
   }
   const toggleKey = $("btn-toggle-key");
   if (toggleKey) {
@@ -432,6 +468,7 @@ export const Settings = {
   downloadCatalog,
   testActiveProvider,
   refreshLiveModels,
+  scheduleKeyDiscovery,
   scheduleModelSearch,
   runModelSearch,
   renderHits,
@@ -440,4 +477,5 @@ export const Settings = {
   render,
   bindEvents,
 };
+
 

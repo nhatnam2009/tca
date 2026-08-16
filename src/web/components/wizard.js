@@ -337,24 +337,21 @@ export async function loadWizardModels(source) {
 
   const id = encodeURIComponent(wiz.providerId);
   try {
-    const res = await api(source === "live" ? `/api/models/live?provider=${id}` : `/api/catalog?provider=${id}`);
+    const res = await api(`/api/providers/${id}/discover`, {
+      method: "POST",
+      body: { apiKey: wiz.apiKey || "", baseUrl: wiz.baseUrl || "", force: source === "live" },
+    });
     const models = (res && res.models) || [];
     for (const m of models) {
       if (!m || !m.id) continue;
-      sel.appendChild(option(m.id, source === "live" ? m.id : modelLabel(m)));
+      sel.appendChild(option(m.id, modelLabel(m)));
       if (dl) dl.appendChild(option(m.id, m.name || m.id));
     }
     if (wiz.model && models.some((m) => m.id === wiz.model)) sel.value = wiz.model;
     if (models.length) {
-      note.textContent =
-        source === "live"
-          ? `${models.length} models loaded from the server.`
-          : `${models.length} models in the catalog. Prices are per 1M tokens and drift.`;
+      note.textContent = `${models.length} models loaded. Prices are per 1M tokens and drift.`;
     } else {
-      note.textContent =
-        source === "live"
-          ? "The server reported no models. Load one, then tap the button above."
-          : "Nothing in the catalog for this provider - type the model id yourself.";
+      note.textContent = "Nothing found for this provider — type the model id yourself.";
     }
   } catch (err) {
     if (err.message === "Unauthorized") return;

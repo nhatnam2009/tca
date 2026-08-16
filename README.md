@@ -516,6 +516,7 @@ src/config.js        config resolution, ${ENV} expansion, key redaction
 src/i18n.js          vi/en strings, read by Node and served to the browser
 src/providers.js     30 probed providers: base URL, wire format, env vars
 src/catalog.js       models.dev catalog: offline seed + optional full download
+src/discover.js      live provider endpoint model discovery with 24h caching & fallback
 src/recommended.js   curated shortlist
 src/setup.js         env key detection, add provider, test connection
 src/provider.js      the two wire formats, SSE, retries, cache breakpoints, thinking
@@ -548,6 +549,7 @@ tools/check-fetch-source.sh   install.sh's libcurl repair and size report, again
 test/agent.test.mjs        end-to-end against a fake provider
 test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity, install.sh
 test/context.test.mjs      pairing, repair, compaction, the store and checkpoints
+test/discover.test.mjs     endpoint model discovery, format normalization, cache TTL
 test/markdown.test.mjs     the UI renderer, highlighter and components, in a DOM stub
 test/search.test.mjs       ripgrep parity for grep and glob, the plan tool, AGENTS.md
 test/verify.test.mjs       diagnostics, and the tool set each mode and agent gets
@@ -558,7 +560,7 @@ test/wire.test.mjs         what actually goes on the socket, for both formats
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 154 tests, no network or API key needed
+node --test test/*.test.mjs     # 162 tests, no network or API key needed
 npx tsc --noEmit                # JSDoc types, on a dev machine only
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```
