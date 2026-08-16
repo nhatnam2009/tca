@@ -141,25 +141,73 @@ export function fillSettings(cfg, provId, lang) {
   fillProvider(cfg, provId);
 }
 
+
+function modelSearchText(m) {
+  return `${m?.id || ""} ${m?.name || ""}`.toLowerCase();
+}
+
+export function renderModelLibrary(models, current = "", cfg = null, provId = null) {
+  const host = $("model-library");
+  const search = $("model-library-search");
+  const count = $("model-library-count");
+  if (!host) return;
+  const q = (search?.value || "").trim().toLowerCase();
+  const seen = new Set();
+  const items = [];
+  for (const m of (models || [])) {
+    if (!m?.id || seen.has(m.id)) continue;
+    seen.add(m.id);
+    if (q && !modelSearchText(m).includes(q)) continue;
+    items.push(m);
+  }
+  host.textContent = "";
+  if (count) count.textContent = `${items.length} model${items.length === 1 ? "" : "s"}`;
+  if (!items.length) {
+    host.appendChild(el("div", "model-empty", q ? "No matching models." : "No models discovered yet. Tap Scan provider."));
+    return;
+  }
+  for (const m of items) {
+    const active = m.id === current;
+    const card = el("button", `model-card${active ? " active" : ""}`);
+    card.type = "button";
+    card.dataset.modelId = m.id;
+    const top = el("div", "model-card-top");
+    top.appendChild(el("strong", "model-card-name", m.name || m.id));
+    if (active) top.appendChild(el("span", "model-active", "ACTIVE"));
+    card.appendChild(top);
+    card.appendChild(el("code", "model-card-id", m.id));
+    const meta = [fmtContext(m), fmtPrice(m), m.reasoning ? "reasoning" : ""].filter(Boolean).join(" · ");
+    if (meta) card.appendChild(el("span", "model-card-meta", meta));
+    card.addEventListener("click", () => {
+      const input = $("prov-model");
+      const sel = $("model-picker");
+      if (input) { input.value = m.id; input.dispatchEvent(new Event("input", { bubbles: true })); }
+      if (sel) sel.value = m.id;
+      renderModelLibrary(models, m.id, cfg, provId);
+    });
+    host.appendChild(card);
+  }
+}
+
 export async function fillModelPicker(provId, cfg, override) {
   const sel = $("model-picker");
   const note = $("model-picker-note");
   if (!sel || !note) return;
   sel.textContent = "";
-  sel.appendChild(option("", "\u2014 choose from catalog \u2014"));
+  sel.hidden = true;
   note.className = "muted small";
 
   let list = override && override.models;
   if (list) {
     note.textContent = override.note || "";
   } else {
-    note.textContent = "Loading model list\u2026";
+    note.textContent = "Loading model list…";
     try {
       const res = await api(`/api/catalog?provider=${encodeURIComponent(provId || "")}`);
       list = (res && res.models) || [];
       note.textContent = list.length
-        ? `${list.length} models known for "${provId}".`
-        : `No catalog entry for "${provId}". Type the model id below, or use "Refresh from provider".`;
+        ? `${list.length} catalog models available. Scan provider for the live list.`
+        : `No catalog models. Scan provider to discover its actual /models list.`;
     } catch (err) {
       list = [];
       note.className = "warn small";
@@ -167,24 +215,31 @@ export async function fillModelPicker(provId, cfg, override) {
     }
   }
 
-  modelChoices = list;
+  // Preserve the provider's discovered/saved IDs and merge them with catalog/live data.
+  const p = cfg?.providers?.[provId] || {};
+  const saved = Array.isArray(p.models) ? p.models : [];
+  const merged = [];
+  const seen = new Set();
+  for (const m of list || []) {
+    const item = typeof m === "string" ? { id: m, name: m } : m;
+    if (!item?.id || seen.has(item.id)) continue;
+    seen.add(item.id); merged.push(item);
+  }
+  for (const id of saved) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id); merged.push({ id, name: id });
+  }
+  modelChoices = merged;
+
   const dl = $("model-list");
   if (dl) dl.textContent = "";
-  const seen = new Set();
-  for (const m of list) {
-    if (!m || !m.id || seen.has(m.id)) continue;
-    seen.add(m.id);
-    sel.appendChild(option(m.id, modelLabel(m)));
-    if (dl) dl.appendChild(option(m.id, m.name || m.id));
-  }
-  for (const m of (cfg && cfg.providers && cfg.providers[provId] && cfg.providers[provId].models) || []) {
-    if (!seen.has(m)) {
-      seen.add(m);
-      if (dl) dl.appendChild(option(m, m));
-    }
-  }
+  for (const m of merged) if (dl) dl.appendChild(option(m.id, m.name || m.id));
+
   const current = $("prov-model") ? $("prov-model").value.trim() : "";
-  sel.value = seen.has(current) ? current : "";
+  sel.textContent = "";
+  for (const m of merged) sel.appendChild(option(m.id, modelLabel(m)));
+  sel.value = current;
+  renderModelLibrary(merged, current, cfg, provId);
 }
 
 export function renderCatalogInfo(state, providersInfo) {
@@ -266,6 +321,11 @@ export async function refreshLiveModels(provId, cfg) {
       body: { apiKey, baseUrl, force: true },
     });
     const models = (res && res.models) || [];
+    const providerCfg = cfg?.providers?.[provId];
+    if (providerCfg) {
+      const ids = models.map((m) => typeof m === "string" ? m : m?.id).filter(Boolean);
+      providerCfg.models = [...new Set([...(providerCfg.models || []), ...ids])];
+    }
     await fillModelPicker(provId, cfg, {
       models,
       note: models.length
@@ -298,6 +358,11 @@ export function scheduleKeyDiscovery(provId, cfg, onDiscovered) {
       });
       const models = (res && res.models) || [];
       if (models.length > 0) {
+        const providerCfg = cfg?.providers?.[provId];
+        if (providerCfg) {
+          const ids = models.map((m) => typeof m === "string" ? m : m?.id).filter(Boolean);
+          providerCfg.models = [...new Set([...(providerCfg.models || []), ...ids])];
+        }
         await fillModelPicker(provId, cfg, { models });
         if (typeof onDiscovered === "function") onDiscovered(models);
       }
@@ -457,6 +522,10 @@ export function bindEvents({
   if (rmBtn && onRemoveProvider) rmBtn.addEventListener("click", onRemoveProvider);
   const saveModelBtn = $("btn-save-model-id");
   if (saveModelBtn && onSaveModelId) saveModelBtn.addEventListener("click", onSaveModelId);
+  const modelLibrarySearch = $("model-library-search");
+  if (modelLibrarySearch && actions.onModelLibrarySearch) {
+    modelLibrarySearch.addEventListener("input", actions.onModelLibrarySearch);
+  }
   const reloadBtn = $("btn-reload-config");
   if (reloadBtn && onReloadConfig) reloadBtn.addEventListener("click", onReloadConfig);
   const langSel = $("cfg-lang");
@@ -486,6 +555,7 @@ export const Settings = {
   saveCurrentModelId,
   fillSettings,
   fillModelPicker,
+  renderModelLibrary,
   renderCatalogInfo,
   downloadCatalog,
   testActiveProvider,

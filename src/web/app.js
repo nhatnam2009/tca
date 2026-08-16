@@ -542,6 +542,11 @@ export function wire() {
       const sel = $("model-picker");
       const typed = $("prov-model") ? $("prov-model").value.trim() : "";
       if (sel) sel.value = Settings.modelChoices.some((m) => m.id === typed) ? typed : "";
+      Settings.renderModelLibrary(Settings.modelChoices, typed, appState.cfg, appState.provId);
+    },
+    onModelLibrarySearch: () => {
+      const typed = $("prov-model") ? $("prov-model").value.trim() : "";
+      Settings.renderModelLibrary(Settings.modelChoices, typed, appState.cfg, appState.provId);
     },
     onTestProvider: () => Settings.testActiveProvider(appState.provId),
     onRefreshLive: () => Settings.refreshLiveModels(appState.provId, appState.cfg),

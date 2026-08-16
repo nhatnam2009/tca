@@ -7,7 +7,7 @@
  *   - skips API key step for local runtimes.
  */
 
-import { $, el, option, t, toast, PLACEHOLDER_KEY, modelLabel, testPending, testResult } from "../helpers.js";
+import { $, el, option, t, toast, PLACEHOLDER_KEY, modelLabel, fmtContext, fmtPrice, testPending, testResult } from "../helpers.js";
 import { api } from "../api.js";
 
 export const TIERS = {
@@ -324,6 +324,39 @@ export function renderStep3() {
   loadWizardModels(local ? "live" : "catalog").catch(() => {});
 }
 
+
+function renderWizardModelLibrary(models) {
+  const host = $("wiz-model-library");
+  const search = $("wiz-model-search");
+  if (!host) return;
+  const q = (search?.value || "").trim().toLowerCase();
+  host.textContent = "";
+  const filtered = (models || []).filter((m) => m?.id && (!q || `${m.id} ${m.name || ""}`.toLowerCase().includes(q)));
+  if (!filtered.length) {
+    host.appendChild(el("div", "model-empty", q ? "No matching models." : "No models found."));
+    return;
+  }
+  for (const m of filtered) {
+    const card = el("button", `model-card${m.id === wiz.model ? " active" : ""}`);
+    card.type = "button";
+    const top = el("div", "model-card-top");
+    top.appendChild(el("strong", "model-card-name", m.name || m.id));
+    if (m.id === wiz.model) top.appendChild(el("span", "model-active", "SELECTED"));
+    card.appendChild(top);
+    card.appendChild(el("code", "model-card-id", m.id));
+    const meta = [fmtContext(m), fmtPrice(m), m.reasoning ? "reasoning" : ""].filter(Boolean).join(" · ");
+    if (meta) card.appendChild(el("span", "model-card-meta", meta));
+    card.addEventListener("click", () => {
+      wiz.model = m.id;
+      if ($("wiz-model")) $("wiz-model").value = m.id;
+      if ($("wiz-model-select")) $("wiz-model-select").value = m.id;
+      renderWizardModelLibrary(models);
+      wizStatus("");
+    });
+    host.appendChild(card);
+  }
+}
+
 export async function loadWizardModels(source) {
   const sel = $("wiz-model-select");
   const dl = $("wiz-model-list");
@@ -342,6 +375,8 @@ export async function loadWizardModels(source) {
       body: { apiKey: wiz.apiKey || "", baseUrl: wiz.baseUrl || "", force: source === "live" },
     });
     const models = (res && res.models) || [];
+    wiz.discoveredModels = models;
+    renderWizardModelLibrary(models);
     for (const m of models) {
       if (!m || !m.id) continue;
       sel.appendChild(option(m.id, modelLabel(m)));
@@ -426,7 +461,8 @@ export async function wizardTest() {
 
 export async function wizardFinish(callbacks = {}) {
   const draft = wizardDraft();
-  const body = { id: wiz.providerId, kind: draft.kind, baseUrl: draft.baseUrl, model: draft.model };
+  const discoveredIds = Array.isArray(wiz.discoveredModels) ? wiz.discoveredModels.map((m) => m?.id).filter(Boolean) : [];
+  const body = { id: wiz.providerId, kind: draft.kind, baseUrl: draft.baseUrl, model: draft.model, models: [...new Set(discoveredIds)] };
   if (draft.apiKey) body.apiKey = draft.apiKey;
   const label = wiz.label || (wiz.providerId === "other" ? "custom" : "");
   if (label) body.label = label;
@@ -490,6 +526,8 @@ export function bindEvents(actions = {}) {
   }
   const liveBtn = $("btn-wiz-live");
   if (liveBtn) liveBtn.addEventListener("click", () => loadWizardModels("live").catch(() => {}));
+  const wizardModelSearch = $("wiz-model-search");
+  if (wizardModelSearch) wizardModelSearch.addEventListener("input", () => renderWizardModelLibrary(wiz?.discoveredModels || []));
   const modelSelect = $("wiz-model-select");
   if (modelSelect) {
     modelSelect.addEventListener("change", (e) => {

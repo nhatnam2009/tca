@@ -285,8 +285,10 @@
               </button>
             </div>
 
-            <label for="wiz-model-select" data-i18n="wizard.s3.modelsLabel">Models</label>
-            <select id="wiz-model-select"></select>
+            <label for="wiz-model-search" data-i18n="wizard.s3.modelsLabel">Models</label>
+            <input id="wiz-model-search" type="search" placeholder="Search models…" autocapitalize="off" autocorrect="off" spellcheck="false" />
+            <div id="wiz-model-library" class="model-library" aria-live="polite"></div>
+            <select id="wiz-model-select" hidden aria-hidden="true"></select>
 
             <label for="wiz-model" data-i18n="wizard.s3.modelIdLabel">Model id</label>
             <input
@@ -530,10 +532,16 @@
               environment variable instead of storing it.
             </p>
 
-            <label for="model-picker" data-i18n="provider.model">Model</label>
-            <select id="model-picker" aria-describedby="model-picker-note">
-            </select>
-            <p id="model-picker-note" class="muted small"></p>
+            <div class="model-library-head">
+              <div>
+                <label for="model-library-search" data-i18n="provider.model">Model Library</label>
+                <p id="model-picker-note" class="muted small"></p>
+              </div>
+              <span id="model-library-count" class="model-count">0 models</span>
+            </div>
+            <input id="model-library-search" type="search" placeholder="Search discovered models…" autocapitalize="off" autocorrect="off" spellcheck="false" />
+            <div id="model-library" class="model-library" aria-live="polite"></div>
+            <select id="model-picker" hidden aria-hidden="true"></select>
 
             <label for="prov-model" data-i18n="provider.modelId">Model id (active)</label>
             <div class="row">

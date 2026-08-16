@@ -2035,3 +2035,21 @@ pre.diff code {
     width: 100%;
   }
 }
+
+
+/* ---------------------------------------------------------------- model library */
+.model-library-head { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; }
+.model-library-head label { margin:0; }
+.model-count { font-size:11px; color:var(--fg-faint); white-space:nowrap; }
+.model-library { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; max-height:390px; overflow:auto; padding:2px; scrollbar-width:thin; }
+.model-card { min-width:0; text-align:left; padding:11px; border:1px solid var(--line); border-radius:10px; background:var(--raised); color:var(--fg); cursor:pointer; font:inherit; transition:border-color .15s ease,transform .12s ease; }
+.model-card:hover { border-color:var(--accent); }
+.model-card:active { transform:translateY(1px); }
+.model-card.active { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
+.model-card-top { display:flex; align-items:center; gap:7px; justify-content:space-between; min-width:0; }
+.model-card-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.model-card-id { display:block; margin-top:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--cyan); font-size:10.5px; }
+.model-card-meta { display:block; margin-top:7px; color:var(--fg-faint); font-size:10.5px; }
+.model-active { flex:0 0 auto; padding:2px 5px; border:1px solid var(--accent); border-radius:5px; color:var(--accent); font-size:8px; letter-spacing:.08em; }
+.model-empty { grid-column:1/-1; padding:18px; text-align:center; border:1px dashed var(--line-strong); border-radius:10px; color:var(--fg-faint); font-size:12px; }
+@media (max-width:620px) { .model-library { grid-template-columns:1fr; max-height:340px; } }
