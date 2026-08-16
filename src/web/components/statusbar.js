@@ -17,9 +17,15 @@ export function setStreaming(on, BUSY) {
   const btnSend = $("btn-send");
   const btnStop = $("btn-stop");
   const act = $("activity");
+  const dot = $("status-dot");
   if (btnSend) btnSend.disabled = on;
   if (btnStop) btnStop.hidden = !on;
   if (act) act.hidden = !on;
+  if (dot) {
+    dot.className = on ? "live-dot busy" : "live-dot online";
+    dot.setAttribute("aria-label", on ? "Status: Working" : "Status: Ready");
+    dot.title = on ? "Working" : "Ready";
+  }
   setStatus(on ? (typeof BUSY === "function" ? BUSY() : BUSY || t("chat.working")) : "");
 }
 

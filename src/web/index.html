@@ -51,44 +51,95 @@
 
     <div id="app" class="app" hidden>
 
-      <!-- ============================================================== tabs -->
-      <nav
-        id="tabbar"
-        class="sidebar"
-        role="tablist"
-        aria-label="Sections"
-        data-i18n-aria="app.sections"
-      >
-        <div class="sidebar-header">
-          <h2 data-i18n="app.name">TCA Agent</h2>
-        </div>
-        <div class="sidebar-nav">
+      <!-- ======================================================= sticky header -->
+      <header class="app-header">
+        <button
+          id="btn-drawer"
+          class="btn icon-btn"
+          type="button"
+          aria-label="Open sessions"
+          title="Sessions"
+        >
+          <span class="icon-hamburger" aria-hidden="true">&#9776;</span>
+        </button>
 
         <button
-          id="tab-chat"
-          class="tab"
+          id="model-chip"
+          class="model-chip"
           type="button"
-          role="tab"
-          aria-selected="true"
-          aria-controls="panel-chat"
-          data-i18n="tab.chat"
+          aria-label="Active model"
+          title="Change model"
         >
-          Chat
+          <span id="model-chip-label">model</span>
         </button>
-        <button
-          id="tab-settings"
-          class="tab"
-          type="button"
-          role="tab"
-          aria-selected="false"
-          aria-controls="panel-settings"
-          tabindex="-1"
-          data-i18n="tab.settings"
-        >
-          Settings
-        </button>
-              </div>
-      </nav>
+
+        <div class="header-right">
+          <span id="status-dot" class="live-dot online" aria-label="Status: Ready" title="Ready"></span>
+          <button
+            id="btn-settings-header"
+            class="btn icon-btn"
+            type="button"
+            aria-label="Settings"
+            title="Settings"
+          >
+            <span aria-hidden="true">&#9881;</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- ===================================================== drawer sidebar -->
+      <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
+      <aside id="sidebar-drawer" class="sidebar-drawer" aria-label="Sessions drawer">
+        <div class="drawer-head">
+          <h2 class="drawer-title" data-i18n="app.name">TCA Agent</h2>
+          <button id="btn-close-drawer" class="btn icon-btn" type="button" aria-label="Close drawer">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+        <div class="drawer-body">
+          <div class="drawer-actions row">
+            <button id="btn-new-session" class="btn primary grow" type="button" data-i18n="chat.new">+ New Session</button>
+            <button id="btn-delete-session" class="btn danger" type="button" data-i18n="chat.delete">Delete</button>
+          </div>
+          <div class="drawer-section">
+            <label class="sr-only" for="session-select" data-i18n="chat.session">Session</label>
+            <select id="session-select" class="session-select-drawer grow" size="10"></select>
+          </div>
+        </div>
+        <div class="drawer-footer">
+          <nav
+            id="tabbar"
+            class="drawer-nav"
+            role="tablist"
+            aria-label="Sections"
+            data-i18n-aria="app.sections"
+          >
+            <button
+              id="tab-chat"
+              class="tab active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="panel-chat"
+              data-i18n="tab.chat"
+            >
+              Chat
+            </button>
+            <button
+              id="tab-settings"
+              class="tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="panel-settings"
+              tabindex="-1"
+              data-i18n="tab.settings"
+            >
+              Settings
+            </button>
+          </nav>
+        </div>
+      </aside>
 
       <main class="workspace">
 <!-- ============================================================ wizard -->
@@ -254,14 +305,15 @@
           <!-- ---------------------------------------------------- step 4 -->
           <div id="wizard-4" class="wstep" hidden>
             <h2 class="h2" data-i18n="wizard.s4.title">Test and finish</h2>
-            <dl id="wiz-summary" class="summary"></dl>
-            <button id="btn-wiz-test" class="btn primary block" type="button" data-i18n="provider.test">
-              Test connection
-            </button>
             <p class="muted small" data-i18n="wizard.s4.hint">
-              Sends one 1-token request so a wrong key shows up now, not
-              mid-task.
+              Sends one 1-token request, so a bad key shows up now rather than mid-task.
             </p>
+
+            <dl id="wiz-summary" class="summary"></dl>
+
+            <button id="btn-wiz-test" class="btn block" type="button">
+              Test connection now
+            </button>
             <p
               id="wiz-test-result"
               class="test-result"
@@ -288,19 +340,12 @@
       <!-- ============================================================== chat -->
       <section
         id="panel-chat"
-        class="panel"
+        class="panel panel-chat-main"
         role="tabpanel"
         aria-labelledby="tab-chat"
       >
-        <header class="chat-header">
-          <div class="row">
-            <label class="sr-only" for="session-select" data-i18n="chat.session">Session</label>
-            <select id="session-select" class="grow"></select>
-            <button id="btn-new-session" class="btn" type="button" data-i18n="chat.new">New</button>
-            <button id="btn-delete-session" class="btn danger" type="button" data-i18n="chat.delete">
-              Delete
-            </button>
-          </div>
+        <div id="pinned-todo-container" class="pinned-todo-container" hidden></div>
+        <header class="chat-header sr-only">
           <p id="chat-meta" class="meta muted"></p>
           <p id="provider-warning" class="meta warn" role="alert" hidden></p>
         </header>
@@ -321,29 +366,6 @@
             Jump to latest
           </button>
 
-          <!--
-            Context and cost live above the composer rather than in a menu. They
-            are the two numbers that decide what the user does next - keep going,
-            or start a new session before the next step gets expensive - and
-            neither can be worked out from the transcript.
-          -->
-          <div class="meter">
-            <div class="meter-track"><span id="ctx-fill" class="meter-fill"></span></div>
-            <p id="ctx-label" class="meter-label"></p>
-          </div>
-
-          <div class="statusbar">
-            <span
-              id="activity"
-              class="activity"
-              aria-hidden="true"
-              hidden
-            ></span>
-            <p id="stream-status" class="status" role="status" aria-live="polite"></p>
-            <button id="btn-stop" class="btn stop danger" type="button" hidden data-i18n="chat.stop">
-              Stop
-            </button>
-          </div>
           <form id="composer" class="composer">
             <label class="sr-only" for="composer-input" data-i18n="chat.messageLabel">Message</label>
             <textarea
@@ -366,6 +388,9 @@
               >
                 build
               </button>
+              <button id="btn-stop" class="btn stop danger" type="button" hidden data-i18n="chat.stop">
+                Stop
+              </button>
               <button id="btn-send" class="btn primary" type="submit" data-i18n="chat.send">Send</button>
             </div>
             <p id="composer-hint" class="sr-only" data-i18n="chat.composerHint">
@@ -373,6 +398,22 @@
               Enter, to send.
             </p>
           </form>
+
+          <div class="statusbar-bottom">
+            <div class="meter">
+              <div class="meter-track"><span id="ctx-fill" class="meter-fill"></span></div>
+              <p id="ctx-label" class="meter-label"></p>
+            </div>
+            <div class="statusbar-info">
+              <span
+                id="activity"
+                class="activity"
+                aria-hidden="true"
+                hidden
+              ></span>
+              <p id="stream-status" class="status" role="status" aria-live="polite"></p>
+            </div>
+          </div>
         </div>
       </section>
 

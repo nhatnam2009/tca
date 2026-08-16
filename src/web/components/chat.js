@@ -232,11 +232,15 @@ export async function abort(sessionId) {
 }
 
 export function render(state) {
-  // Render chat meta header
+  // Render chat meta header and model chip
   const meta = $("chat-meta");
   if (meta && state && state.state) {
     const bits = [state.state.active, state.state.model].filter(Boolean).join(" \u00b7 ");
     meta.textContent = state.state.workspace ? `${bits} \u2014 ${state.state.workspace}` : bits;
+  }
+  const chipLabel = $("model-chip-label");
+  if (chipLabel && state && state.state) {
+    chipLabel.textContent = state.state.model || state.state.active || "model";
   }
   const warn = $("provider-warning");
   if (warn && state && state.state) {
@@ -245,7 +249,7 @@ export function render(state) {
   }
 }
 
-export function bindEvents({ onSend, onAbort, onToggleMode }) {
+export function bindEvents({ onSend, onAbort, onToggleMode, onOpenSettings }) {
   const m = messagesEl();
   if (m) {
     m.addEventListener("scroll", () => {
@@ -254,6 +258,14 @@ export function bindEvents({ onSend, onAbort, onToggleMode }) {
       const jump = $("jump-latest");
       if (jump) jump.hidden = atBottom;
     }, { passive: true });
+  }
+  const modelChip = $("model-chip");
+  if (modelChip && onOpenSettings) {
+    modelChip.addEventListener("click", onOpenSettings);
+  }
+  const settingsHeaderBtn = $("btn-settings-header");
+  if (settingsHeaderBtn && onOpenSettings) {
+    settingsHeaderBtn.addEventListener("click", onOpenSettings);
   }
   const jumpBtn = $("jump-latest");
   if (jumpBtn) jumpBtn.addEventListener("click", () => scrollToBottom(true));

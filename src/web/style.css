@@ -127,6 +127,188 @@ body.has-vvh {
   height: 100%;
 }
 
+/* ----------------------------------------------------------- sticky header */
+
+.app-header {
+  height: 48px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--pad);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.icon-btn {
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--fg);
+  font-size: 18px;
+  border-radius: var(--r);
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: var(--raised);
+}
+
+.model-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 55%;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.model-chip:hover {
+  border-color: var(--accent);
+  background: var(--raised);
+}
+#model-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--green);
+  display: inline-block;
+}
+.live-dot.online { background: var(--green); }
+.live-dot.busy { background: var(--amber); animation: pulse 1s infinite; }
+.live-dot.offline { background: var(--red); }
+
+/* ---------------------------------------------------------- drawer sidebar */
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  z-index: 100;
+  transition: opacity 0.2s ease;
+}
+
+.sidebar-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 290px;
+  max-width: 85vw;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 2px 0 16px rgba(0, 0, 0, 0.4);
+}
+
+.sidebar-drawer.open {
+  transform: translateX(0);
+}
+
+.drawer-head {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--pad);
+  border-bottom: 1px solid var(--line);
+}
+
+.drawer-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.drawer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.session-select-drawer {
+  width: 100%;
+  flex: 1;
+  min-height: 200px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  padding: 6px;
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.drawer-footer {
+  border-top: 1px solid var(--line);
+  padding: 8px var(--pad);
+  background: var(--bg-sunken);
+}
+
+.drawer-nav {
+  display: flex;
+  gap: 8px;
+}
+.drawer-nav .tab {
+  flex: 1;
+  min-height: 38px;
+  font-size: 13px;
+  border-radius: var(--r);
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--fg-dim);
+}
+.drawer-nav .tab.active {
+  color: var(--fg);
+  background: var(--raised-2);
+  border-color: var(--accent);
+}
+
 .sidebar {
   display: flex;
   align-items: stretch;
@@ -195,9 +377,28 @@ body.has-vvh {
   flex-direction: column;
 }
 
+.panel-chat-main {
+  position: relative;
+  height: 100%;
+}
+
+.pinned-todo-container {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 6px var(--pad) 0;
+  background: var(--bg);
+}
+
 /* Everything except the chat scrolls as one column. */
 .panel.power,
 .panel.settings,
+.panel.wizard {
+  overflow-y: auto;
+  padding: var(--pad);
+  gap: var(--gap);
+  -webkit-overflow-scrolling: touch;
+}
 .panel.wizard {
   overflow-y: auto;
   padding: var(--pad);
@@ -1131,13 +1332,25 @@ pre.diff code {
   font-size: 10.5px;
   color: var(--fg-faint);
   white-space: nowrap;
-}
-
-.statusbar {
+.statusbar,
+.statusbar-bottom {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   min-height: 22px;
+  margin-top: 4px;
+}
+
+.statusbar-bottom .meter {
+  flex: 1;
+}
+
+.statusbar-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 
 .status {
@@ -1188,6 +1401,7 @@ pre.diff code {
   padding: 6px 4px;
   background: none;
   border: 0;
+  font-size: 16px;
   max-height: 40dvh;
   overflow-y: auto;
 }

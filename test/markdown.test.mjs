@@ -692,3 +692,31 @@ test("every element app.js reaches for exists in index.html", () => {
   const missing = [...asked].filter((id) => !present.has(id)).sort();
   assert.deepEqual(missing, [], `index.html has no element with id: ${missing.join(", ")}`);
 });
+
+test("mobile-first layout contains sticky header, drawer, and touch requirements", () => {
+  const html = fs.readFileSync(path.join(SRC, "web", "index.html"), "utf8");
+  const css = fs.readFileSync(path.join(SRC, "web", "style.css"), "utf8");
+
+  // Sticky header elements
+  assert.ok(html.includes('id="btn-drawer"'), "missing btn-drawer in header");
+  assert.ok(html.includes('id="model-chip"'), "missing model-chip in header");
+  assert.ok(html.includes('id="model-chip-label"'), "missing model-chip-label in header");
+  assert.ok(html.includes('id="status-dot"'), "missing status-dot in header");
+  assert.ok(html.includes('id="btn-settings-header"'), "missing btn-settings-header in header");
+
+  // Drawer sidebar elements
+  assert.ok(html.includes('id="sidebar-drawer"'), "missing sidebar-drawer");
+  assert.ok(html.includes('id="sidebar-backdrop"'), "missing sidebar-backdrop");
+  assert.ok(html.includes('id="btn-close-drawer"'), "missing btn-close-drawer");
+
+  // Pinned todo container
+  assert.ok(html.includes('id="pinned-todo-container"'), "missing pinned-todo-container");
+
+  // Mobile touch and sizing in CSS
+  assert.ok(css.includes("--tap: 44px"), "CSS must define 44px accessibility tap target");
+  assert.ok(css.includes(".app-header"), "CSS must define .app-header sticky header");
+  assert.ok(css.includes(".sidebar-drawer"), "CSS must define .sidebar-drawer");
+  assert.ok(css.includes(".sidebar-backdrop"), "CSS must define .sidebar-backdrop");
+  assert.ok(css.includes("font-size: 16px"), "composer textarea must have 16px font-size to prevent zoom");
+});
+

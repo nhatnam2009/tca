@@ -55,6 +55,7 @@ export function showView(name) {
 }
 
 export function switchTab(name) {
+  Sidebar.closeDrawer();
   const target = TABS.some((x) => x.name === name) ? name : "chat";
   showView(target);
   for (const { name: n, tab } of TABS) {
@@ -128,6 +129,7 @@ export async function selectSession(id) {
   StatusBar.setStreaming(false);
   const messages = Chat.messagesEl();
   if (messages) messages.textContent = "";
+  TodoPanel.resetTodo();
   resetMeterState();
   StatusBar.renderMeter(appState);
 
@@ -285,7 +287,7 @@ export function handleEvent(ev) {
       Chat.noteLine(ev.text || "", "warn", ev);
       break;
     case "todo":
-      TodoPanel.renderTodo(ev.items || [], Chat.messageHost());
+      TodoPanel.renderTodo(ev.items || [], $("pinned-todo-container") || Chat.messageHost());
       break;
     case "title":
       if (ev.title && appState.sessionId) {
@@ -435,6 +437,7 @@ export function wire() {
     }),
     onAbort: () => Chat.abort(appState.sessionId),
     onToggleMode: () => setMode(appState.mode === "plan" ? "build" : "plan"),
+    onOpenSettings: () => switchTab("settings"),
   });
 
   // Settings events

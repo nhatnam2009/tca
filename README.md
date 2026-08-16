@@ -560,7 +560,7 @@ test/wire.test.mjs         what actually goes on the socket, for both formats
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 162 tests, no network or API key needed
+node --test test/*.test.mjs     # 163 tests, no network or API key needed
 npx tsc --noEmit                # JSDoc types, on a dev machine only
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```
