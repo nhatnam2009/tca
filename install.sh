@@ -423,10 +423,20 @@ fetch_source() {
     fi
     warn "git clone thất bại:"
     printf '%s\n' "$out" | tail -4 | sed 's/^/      /' >&2
-    # Phân loại, vì bốn nguyên nhân này cần bốn cách xử lý hoàn toàn khác nhau.
+    # Phân loại, vì các nguyên nhân này cần những cách xử lý hoàn toàn khác nhau.
     case "$out" in
+      # Trường hợp riêng, và phải xét TRƯỚC cái chung bên dưới: git chạy được,
+      # `git --version` bình thường, nhưng remote helper cho https là một binary
+      # khác và nó link động tới libcurl. Khi libcurl cũ hơn bản git được build
+      # cho, chỉ đúng https vỡ:
+      #   cannot locate symbol "curl_global_trace" referenced by git-remote-http
+      # Khuyên `pkg reinstall git` ở đây là vô ích — git không phải thứ hỏng.
+      *git-remote-http* | *curl_global* | *libcurl*)
+        warn "không phải git hỏng, mà libcurl đang cũ hơn bản git được build cho. Sửa:"
+        warn "  pkg upgrade -y -o Dpkg::Options::=--force-confold"
+        warn "  pkg install --reinstall libcurl" ;;
       *"CANNOT LINK EXECUTABLE"* | *"cannot locate symbol"*)
-        warn "git bị lệch thư viện. Sửa sau bằng: pkg reinstall git" ;;
+        warn "git bị lệch thư viện. Sửa: pkg upgrade -y, rồi pkg install --reinstall git" ;;
       *certificate* | *SSL* | *TLS*)
         warn "lỗi chứng chỉ. Sửa sau bằng: pkg install ca-certificates" ;;
       *"already exists"*)
