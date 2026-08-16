@@ -7,6 +7,17 @@ build step, no native modules to compile on the device.
 The agent reads and writes files, searches code, and runs shell commands inside a
 workspace directory. You drive it from the phone's browser.
 
+It is meant to be as good as a desktop coding agent, not a cut-down one, within the
+constraints a phone actually imposes. That means the things that decide whether an
+agent is useful rather than the things that are easy to list:
+[checking what it just wrote](#verification) so it finds out immediately when the
+code does not compile, [delegating wide reading to sub-agents](#sub-agents) so a
+long task does not fill the context window,
+[summarising rather than truncating](#context) when it does, prompt caching because
+a forty-step turn otherwise re-sends the whole history forty times, and a
+[plan mode](#modes) so you can approve the approach before it spends your battery
+on it.
+
 ## Install
 
 One command, on a fresh Termux, start to finish:
@@ -137,7 +148,8 @@ whatever the agent read out of your files.
 
 ## Safety
 
-Three rails, and the tests in `test/agent.test.mjs` cover all of them:
+Three rails, and the tests in `test/agent.test.mjs` and `test/verify.test.mjs`
+cover all of them:
 
 - **Workspace confinement.** Every tool path is resolved through `realpath` and
   must land inside `config.workspace`. Symlinks out of the tree fail.
@@ -151,10 +163,13 @@ Three rails, and the tests in `test/agent.test.mjs` cover all of them:
   Stop closes it too.
 - **File changes** are allowed by default, because tapping Allow for every write
   on a phone makes the agent unusable and workspace confinement already bounds
-  the damage. Set `autoApproveEdits: false` (Settings â†’ "Auto-approve file
+  the damage. Set `autoApproveEdits: false` (Settings → "Auto-approve file
   changes") and `write_file`, `edit_file`, `patch_file`, `move_file` and
   `delete_file` each ask first. Either way the tool output contains a diff of
   what changed, so you can see it after the fact.
+
+[Plan mode](#modes) is the fourth rail when you want one: it removes the write tools
+entirely rather than asking about them, and never auto-approves a command.
 
 Point `workspace` at a directory under git. Then a bad edit is one
 `git checkout --` away, which is a better safety net than any prompt.
@@ -242,12 +257,12 @@ typed digit by digit.
 
 ## Tools
 
-Fifteen. The file tools are confined to the workspace; two reach the network.
+Seventeen. The file tools are confined to the workspace; two reach the network.
 
 ```
 read_file  batch_read  write_file  edit_file  patch_file  move_file  delete_file
 list_dir   tree        glob        grep       run_command todo_write
-read_url   web_search
+read_url   web_search  task        verify
 ```
 
 `edit_file` replaces one exact string and refuses an ambiguous match.
@@ -260,6 +275,10 @@ approval; file changes ask only when `autoApproveEdits` is off.
 session under `~/.tca/todos/`, never in your workspace, and is re-injected into
 the system prompt every turn so history compaction cannot lose the plan halfway
 through a long job. The UI renders it as one card that updates in place.
+
+`task` delegates to a sub-agent — see [Sub-agents](#sub-agents). `verify` runs the
+project's own checker on demand; writes already do it automatically, see
+[Verification](#verification).
 
 `grep` and `glob` use ripgrep and fd when the device has them, and the JavaScript
 walk when it does not. The two paths must return identical answers, or the agent's
@@ -282,6 +301,104 @@ the tests pin the page shape against a saved fixture, and an unreadable page
 reports "the HTML has probably changed" rather than "no results" - because those
 need completely different responses from a human.
 
+## Verification
+
+After every write the file that changed is run through whatever checker the
+project already has, and the result is appended to the same tool result the agent
+reads. `node --check`, `tsc --noEmit`, `ruff` (or `py_compile`), `gofmt -e`,
+`bash -n`, and a JSON parse. Nothing to configure: a project that can be built has
+already said how.
+
+This closes the largest quality gap between a phone agent and a desktop one.
+Without it the loop is *edit → "Done, I updated the handler." → the file does not
+compile*, and the agent has no way to know, because nothing told it.
+
+It is deliberately **not** a language server. tsserver on a phone costs hundreds of
+megabytes of RAM, takes tens of seconds to index, and gets killed by Android's
+low-memory killer mid-answer. Running the project's own checker on the one file
+that changed gets most of the value for a fraction of the cost.
+
+Two rules keep the output useful rather than overwhelming: errors in the file just
+touched come first and pre-existing errors elsewhere are counted rather than
+dumped, and a checker that times out says so — silence would read as "no errors",
+which is the one wrong answer. Turn it off with `verifyEdits: false` if you are
+working somewhere the checker is too slow.
+
+Everything here spawns with an argv array and no shell. Quoting a model-supplied
+path for a shell is a losing game across platforms; the first version did it and
+produced `Cannot find module '"fine.mjs"'` on Windows, because cmd.exe and Node's
+own argv escaping each quoted it once.
+
+## Modes
+
+`build` and `plan`, toggled next to Send. Plan mode withholds every file-writing
+tool and never auto-approves a shell command, so the agent investigates and tells
+you what it would change. `run_command` survives because reading a repository
+properly needs `git log` and `git diff` — it just asks every time.
+
+The mode is sent with the message rather than read from the config on the server:
+the toggle and Send are one gesture, and a config write that has not landed yet
+must not be what decides whether the agent can edit your files. It is enforced
+twice — the tool specs are withheld, *and* the call is refused — because a model
+that saw `write_file` earlier in the conversation can still ask for it.
+
+Plan mode matters more on a phone than on a desktop. You want to approve the
+approach before it spends forty steps of your battery on it.
+
+## Sub-agents
+
+The `task` tool runs a second agent with its own fresh context and hands back only
+its final answer.
+
+This is the right way to solve the context problem, and better than compaction at
+it: a sub-agent that reads twenty files to answer "where is auth handled" costs the
+parent one paragraph instead of twenty file dumps. Nothing it read enters the
+parent's context, so it never has to be summarised away later.
+
+Two kinds. `explore` is read-only and is the default. `general` can write, for work
+that has to change files. Neither can spawn a sub-agent of its own — that is how one
+tap turns into an unbounded fan-out of paid API calls. Their history lives in memory
+and never touches the session file: it is scratch work, worth watching live and
+worth nothing afterwards.
+
+Their tool activity is streamed to the UI nested under the delegated task, open
+while it runs. A phone user watching a two-minute sub-agent with nothing on screen
+concludes the app has hung, and that is the bug people actually report.
+
+## Context
+
+Long sessions are summarised, not truncated. When the estimated prompt passes 75%
+of the model's real context window, the older part of the history is handed to the
+model to summarise and the summary is stored as a checkpoint, so it is produced
+once rather than on every turn. The full transcript stays in the session file and
+stays visible in the UI; only the model's view narrows.
+
+Two rules make it safe:
+
+- **Cuts only happen where no tool call is open.** Splitting a `tool_use` from its
+  `tool_result` makes both APIs reject the request outright. The previous
+  implementation cut by *message count* — keep the first 2 and the last 6 — which
+  did exactly that, so every session past 30 messages died with a bare 400. Note
+  that "no tool call is open" is a wider rule than "at a turn boundary", and
+  deliberately: a single forty-step turn can overflow the window on its own, and it
+  has to be possible to do something about that.
+- **The summary comes from the model, not from `slice()`.** The old version
+  truncated every message to 200 characters and dropped tool results entirely. The
+  agent kept the knowledge that it had read five files and lost their contents,
+  which is worse than not having read them: it stops re-reading because it believes
+  it already knows.
+
+`src/compact.js` also repairs a history left half-written by a killed process — the
+normal case on Android, not the exotic one — by giving the unanswered calls a
+synthetic "interrupted" result rather than refusing to continue the session.
+
+Prompt caching is on by default where the provider supports it: breakpoints go on
+the tool list, the system prompt, and the last two user turns, which is what makes
+the cache *roll*. On a phone this is not a micro-optimisation — a forty-step turn
+re-sends the whole history forty times, and without caching that is quadratic spend
+on tokens the provider has already seen. The UI shows what came back from cache
+next to the running cost.
+
 ## Layout
 
 ```
@@ -291,16 +408,19 @@ src/providers.js     30 probed providers: base URL, wire format, env vars
 src/catalog.js       models.dev catalog: offline seed + optional full download
 src/recommended.js   curated shortlist
 src/setup.js         env key detection, add provider, test connection
-src/provider.js      the two wire formats, SSE streaming, retries
-src/tools.js         14 tools + workspace confinement + denylist + diff engine
+src/provider.js      the two wire formats, SSE, retries, cache breakpoints, thinking
+src/compact.js       token estimation, safe cut points, history repair, summarising
+src/exec.js          the only place that spawns a process; shell and argv forms
+src/diagnostics.js   run the project's own checker on what was just written
+src/tools.js         17 tools + workspace confinement + denylist + diff engine
 src/fastsearch.js    ripgrep/fd fast path, kept answer-for-answer with the walk
 src/notify.js        termux-notification, so a blocked turn is not invisible
 src/websearch.js     DuckDuckGo HTML search, selectors in one editable table
 src/privilege.js     root / Shizuku / adb backends, and the Android unlocks
 src/capabilities.js  what the agent could do here, scored and tiered
 src/status.js        the `doctor` view of capabilities.js
-src/store.js         sessions as JSONL
-src/loop.js          the agent loop
+src/store.js         sessions as JSONL, parse cache, compaction checkpoints
+src/loop.js          the agent loop, sub-agents, cost accounting
 src/daemon.js        HTTP + SSE + auth + static files
 src/cli.js           serve / run / token / models / doctor / power / adb-setup
 src/web/             the UI: no framework, no build
@@ -308,23 +428,39 @@ install.sh           the one-command install, non-interactive
 tools/gen-seed.mjs   regenerates the offline catalog
 test/agent.test.mjs        end-to-end against a fake provider
 test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity
-test/markdown.test.mjs     the UI renderer and the Power panel, in a DOM stub
+test/context.test.mjs      pairing, repair, compaction, the store and checkpoints
+test/markdown.test.mjs     the UI renderer, highlighter and Power panel, in a DOM stub
 test/search.test.mjs       ripgrep/fd parity, the plan tool, AGENTS.md
+test/verify.test.mjs       diagnostics, and the tool set each mode and agent gets
 test/websearch.test.mjs    the search parser against a saved page, boot script
+test/wire.test.mjs         what actually goes on the socket, for both formats
 ```
 
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 89 tests, no network or API key needed
+node --test test/*.test.mjs     # 145 tests, no network or API key needed
+npx tsc --noEmit                # JSDoc types, on a dev machine only
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```
 
 Tests run the real daemon and the real agent loop against a fake local server
 that speaks the OpenAI wire format, so they cover tool execution, approval
-handling, auth and path confinement without spending tokens. `markdown.test.mjs`
-loads `src/web/app.js` into a small DOM stub that has no `innerHTML` on it, so
-the renderer is pinned down and cannot quietly grow an XSS hole.
+handling, sub-agents, auth and path confinement without spending tokens.
+
+`wire.test.mjs` exists because a fake provider that accepts anything cannot catch
+the bugs the real APIs reject: strict role alternation, `tool_result` ordering,
+thinking blocks replayed without their signature. Every one of those arrives in
+production as a bare 400 naming no cause. `context.test.mjs` asserts
+`tool_use`/`tool_result` pairing directly, on the shapes that used to break it.
+
+`markdown.test.mjs` loads `src/web/app.js` into a small DOM stub that has no
+`innerHTML` on it, so the renderer — including the syntax highlighter — is pinned
+down and cannot quietly grow an XSS hole. It also checks that every `id` app.js
+reaches for exists in `index.html`: nothing else catches that, because the stub
+hands back an element for any id on purpose, and in a browser one missing id
+throws and takes the rest of the script with it.
+
 `capabilities.test.mjs` asserts that `vi` and `en` define exactly the same keys,
 which is the only thing that stops a bilingual UI from rotting.
 
