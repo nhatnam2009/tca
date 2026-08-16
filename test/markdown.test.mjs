@@ -803,3 +803,109 @@ function textOf(node) {
   if (node.text) return node.text;
   return (node.children || []).map(textOf).join(" ");
 }
+
+
+/* ------------------------------------------------------------- highlighting */
+
+/** Highlighted output as [class, text] pairs; plain runs get an empty class. */
+function tokens(code, lang) {
+  const frag = app.highlight(code, lang);
+  return frag.children.map((c) => (c.isText ? ["", c.data] : [c.className, c.textContent]));
+}
+
+/** All text back out, which must always equal the input exactly. */
+const rejoin = (code, lang) => tokens(code, lang).map(([, t]) => t).join("");
+
+test("the highlighter never alters the text it was given", () => {
+  // The one property that matters. A mis-coloured token is cosmetic; a dropped or
+  // duplicated character means the user is reading code that was never written.
+  const samples = [
+    ["js", "const x = 'a\\'b'; // note\nfn(1, 2.5)"],
+    ["py", "def f(a):\n    return a # done"],
+    ["json", '{"a": [1, true, null]}'],
+    ["sh", "for f in *.js; do echo $f; done # loop"],
+    ["go", "func main() {\n\tfmt.Println(`x`)\n}"],
+    ["sql", "select * from t where a = 1 -- why"],
+    ["html", "<p class='x'>hi</p>"],
+    ["", "plain text with ` and ' and \" in it"],
+    ["nonsense-lang", "some ** unparseable /* text"],
+    ["js", ""],
+    ["js", "/* unterminated block comment"],
+    ["js", "'unterminated string"],
+  ];
+  for (const [lang, code] of samples) {
+    assert.equal(rejoin(code, lang), code, `${lang || "plain"} lost or changed text`);
+  }
+});
+
+test("an unknown language is left as one plain text node", () => {
+  assert.deepEqual(tokens("anything at all", "cobol"), [["", "anything at all"]]);
+  assert.deepEqual(tokens("no lang tag", ""), [["", "no lang tag"]]);
+  // Markdown is deliberately not highlighted: it is prose, and colouring its
+  // punctuation as code makes it harder to read, not easier.
+  assert.deepEqual(tokens("# heading", "md"), [["", "# heading"]]);
+});
+
+test("comments and strings win over the keywords inside them", () => {
+  const commented = tokens("// return false\n", "js");
+  assert.deepEqual(commented[0], ["tok-comment", "// return false"]);
+  assert.ok(
+    !commented.some(([cls]) => cls === "tok-kw"),
+    "a keyword inside a comment must not be coloured as code",
+  );
+
+  const stringy = tokens("'return null'", "js");
+  assert.deepEqual(stringy, [["tok-str", "'return null'"]]);
+});
+
+test("keywords, numbers and calls each get their own class", () => {
+  const got = tokens("const n = 42; doThing(n)", "js");
+  const byClass = new Map(got.filter(([c]) => c).map(([c, t]) => [c, t]));
+  assert.equal(byClass.get("tok-kw"), "const");
+  assert.equal(byClass.get("tok-num"), "42");
+  assert.equal(byClass.get("tok-fn"), "doThing");
+});
+
+test("the language tag is normalised, so ```js title=x still highlights", () => {
+  assert.ok(tokens("const x = 1", "JS").some(([c]) => c === "tok-kw"));
+  assert.ok(tokens("const x = 1", "js:src/a.js").some(([c]) => c === "tok-kw"));
+  assert.ok(tokens("const x = 1", "js extra").some(([c]) => c === "tok-kw"));
+});
+
+test("a code block carries its language, a copy button and highlighted code", () => {
+  const block = app.codeBlock("const a = 1;", "js");
+  assert.equal(block.className, "code");
+  const head = block.children[0];
+  assert.equal(head.children[0].textContent, "js");
+  assert.equal(head.children[1].tagName, "BUTTON");
+  const pre = block.children[1];
+  assert.equal(pre.tagName, "PRE");
+  assert.equal(pre.textContent, "const a = 1;");
+  assert.ok(
+    pre.children[0].children.some((c) => c.className === "tok-kw"),
+    "the code should be tokenised, not one flat text node",
+  );
+
+  // An untagged block still renders, just without colour.
+  const plain = app.codeBlock("???", "");
+  assert.equal(plain.children[0].children[0].textContent, "text");
+  assert.equal(plain.children[1].textContent, "???");
+});
+
+test("every element app.js reaches for exists in index.html", () => {
+  // $("...") returns null for a missing id and the next property access throws,
+  // which in a browser kills the whole script - including the parts that do work.
+  // Nothing else catches this: the DOM stub above hands back an element for any
+  // id, on purpose, so the renderer tests do not need markup.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const read = (p) => fs.readFileSync(path.join(here, "..", p), "utf8");
+
+  const asked = new Set();
+  for (const m of read("src/web/app.js").matchAll(/\$\("([a-z0-9-]+)"\)/g)) asked.add(m[1]);
+  const present = new Set();
+  for (const m of read("src/web/index.html").matchAll(/id="([a-z0-9-]+)"/g)) present.add(m[1]);
+
+  assert.ok(asked.size > 40, `only found ${asked.size} lookups; the pattern probably broke`);
+  const missing = [...asked].filter((id) => !present.has(id)).sort();
+  assert.deepEqual(missing, [], `index.html has no element with id: ${missing.join(", ")}`);
+});

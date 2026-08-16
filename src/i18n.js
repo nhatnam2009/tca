@@ -314,6 +314,12 @@ export const DICT = {
     "provider.refreshLive": "Lấy lại từ provider",
     "provider.testHint": "Kiểm tra dùng provider đã lưu trên server — hãy lưu trước nếu bạn vừa đổi key.",
     "provider.maxTokens": "Token đầu ra tối đa",
+    "provider.thinking": "Ngân sách suy nghĩ (token)",
+    "provider.thinkingHint":
+      "0 là tắt. Chỉ model Anthropic có extended thinking dùng được; đổi token lấy khả năng suy luận tốt hơn ở bài khó, và tốn vô ích ở bài dễ.",
+    "provider.promptCache": "Cache prompt",
+    "provider.promptCacheHint":
+      "Bật (khuyên dùng). Một task dài gửi lại toàn bộ hội thoại ở mỗi bước; cache làm provider chỉ tính một phần mười cho phần nó đã đọc. Provider không hỗ trợ thì tự bỏ qua.",
     "provider.testOk": "Kết nối OK — {model} đã trả lời.",
     "provider.testOkPlain": "Kết nối OK.",
     "provider.testFailed": "Kiểm tra thất bại.",
@@ -344,6 +350,9 @@ export const DICT = {
     "agent.autoApproveEdits": "Tự động cho phép sửa file",
     "agent.autoApproveEditsHint":
       "Bật (mặc định): agent ghi, sửa, di chuyển và xoá file trong thư mục làm việc mà không hỏi. Tắt để duyệt từng thay đổi — an toàn hơn nhưng phải bấm nhiều.",
+    "agent.verifyEdits": "Kiểm tra file sau khi ghi",
+    "agent.verifyEditsHint":
+      "Bật (khuyên dùng): sau mỗi lần ghi, file được chạy qua đúng công cụ kiểm tra mà project đã có — node --check, tsc, ruff, gofmt — và lỗi được trả thẳng lại cho agent, nên nó biết ngay là code vừa viết không build được. Tốn thêm một hai giây mỗi lần sửa.",
     "agent.maxSteps": "Số bước tối đa mỗi lượt",
     "agent.instructions": "Chỉ dẫn thêm",
     "agent.instructionsHint": "Được thêm vào system prompt của mọi phiên.",
@@ -734,6 +743,12 @@ export const DICT = {
     "provider.refreshLive": "Refresh from provider",
     "provider.testHint": "Test uses the provider as already saved on the server — save first if you just changed the key.",
     "provider.maxTokens": "Max output tokens",
+    "provider.thinking": "Thinking budget (tokens)",
+    "provider.thinkingHint":
+      "0 turns it off. Only Anthropic models with extended thinking use this; it buys better reasoning on hard problems and costs tokens on easy ones.",
+    "provider.promptCache": "Prompt caching",
+    "provider.promptCacheHint":
+      "On (recommended). A long task re-sends the whole conversation every step; caching makes the provider charge a tenth for the part it has already seen. Providers that do not support it ignore it.",
     "provider.testOk": "Connection OK — {model} answered.",
     "provider.testOkPlain": "Connection OK.",
     "provider.testFailed": "Test failed.",
@@ -764,6 +779,9 @@ export const DICT = {
     "agent.autoApproveEdits": "Auto-approve file changes",
     "agent.autoApproveEditsHint":
       "On (default): the agent writes, edits, moves and deletes files in the workspace without asking. Turn it off to confirm each change — safer, but a lot of tapping.",
+    "agent.verifyEdits": "Check files after writing",
+    "agent.verifyEditsHint":
+      "On (recommended): after each write the file is run through whatever checker this project already has — node --check, tsc, ruff, gofmt — and any error goes straight back to the agent, so it finds out immediately that what it wrote does not compile. Costs a second or two per edit.",
     "agent.maxSteps": "Max steps per turn",
     "agent.instructions": "Extra instructions",
     "agent.instructionsHint": "Appended to the system prompt for every session.",

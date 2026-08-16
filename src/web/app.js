@@ -1573,6 +1573,10 @@ function fillProvider() {
   $("prov-kind").value = p.kind === "anthropic" ? "anthropic" : "openai";
   $("prov-baseurl").value = p.baseUrl || "";
   $("prov-maxtokens").value = p.maxTokens ?? 8192;
+  $("prov-thinking").value = p.thinkingBudget ?? 0;
+  // Caching is on unless a config says otherwise: it costs nothing to try, and a
+  // provider that does not support cache_control ignores it.
+  $("prov-cache").checked = p.promptCache !== false;
   $("prov-model").value = p.model || "";
 
   const list = $("model-list");
@@ -1661,6 +1665,7 @@ function fillSettings() {
   $("cfg-autoapprove").checked = Boolean(cfg.autoApproveCommands);
   // Absent in configs written before this option existed, and the default is on.
   $("cfg-autoapprove-edits").checked = cfg.autoApproveEdits !== false;
+  $("cfg-verify-edits").checked = cfg.verifyEdits !== false;
   $("cfg-lang").value = normaliseLang(cfg.lang || lang);
   $("cfg-maxsteps").value = cfg.maxSteps ?? 40;
   $("cfg-instructions").value = cfg.instructions || "";
@@ -1888,6 +1893,10 @@ function readProvider() {
   p.baseUrl = $("prov-baseurl").value.trim();
   p.model = $("prov-model").value.trim();
   p.maxTokens = Number($("prov-maxtokens").value) || 8192;
+  // A number, not a checkbox: the API takes a budget, and 0 is the honest way to
+  // say off rather than a separate flag that can disagree with it.
+  p.thinkingBudget = Math.max(0, Number($("prov-thinking").value) || 0);
+  p.promptCache = $("prov-cache").checked;
   if (!Array.isArray(p.models)) p.models = [];
   const key = $("prov-apikey");
   p.apiKey = key.dataset.keep === "1" && key.value === "" ? KEEP : key.value.trim();
@@ -1900,6 +1909,7 @@ function readSettings() {
   cfg.workspace = $("cfg-workspace").value.trim();
   cfg.autoApproveCommands = $("cfg-autoapprove").checked;
   cfg.autoApproveEdits = $("cfg-autoapprove-edits").checked;
+  cfg.verifyEdits = $("cfg-verify-edits").checked;
   cfg.lang = normaliseLang($("cfg-lang").value);
   cfg.maxSteps = Number($("cfg-maxsteps").value) || 40;
   cfg.instructions = $("cfg-instructions").value;

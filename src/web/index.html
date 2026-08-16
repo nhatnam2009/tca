@@ -555,6 +555,32 @@
               step="256"
               inputmode="numeric"
             />
+
+            <label for="prov-thinking" data-i18n="provider.thinking">Thinking budget (tokens)</label>
+            <input
+              id="prov-thinking"
+              type="number"
+              min="0"
+              max="120000"
+              step="1024"
+              inputmode="numeric"
+              aria-describedby="prov-thinking-hint"
+            />
+            <p id="prov-thinking-hint" class="muted small" data-i18n="provider.thinkingHint">
+              0 turns it off. Only Anthropic models with extended thinking use
+              this; it buys better reasoning on hard problems and costs tokens on
+              easy ones.
+            </p>
+
+            <div class="check">
+              <input id="prov-cache" type="checkbox" aria-describedby="prov-cache-hint" />
+              <label for="prov-cache" data-i18n="provider.promptCache">Prompt caching</label>
+            </div>
+            <p id="prov-cache-hint" class="muted small" data-i18n="provider.promptCacheHint">
+              On (recommended). A long task re-sends the whole conversation every
+              step; caching makes the provider charge a tenth for the part it has
+              already seen. Providers that do not support it ignore it.
+            </p>
           </fieldset>
 
           <fieldset>
@@ -628,6 +654,22 @@
               On (default): the agent writes, edits, moves and deletes files in the
               workspace without asking. Turn it off to confirm each change &mdash;
               safer, but a lot of tapping.
+            </p>
+
+            <div class="check">
+              <input
+                id="cfg-verify-edits"
+                type="checkbox"
+                aria-describedby="verify-edits-hint"
+              />
+              <label for="cfg-verify-edits" data-i18n="agent.verifyEdits">Check files after writing</label>
+            </div>
+            <p id="verify-edits-hint" class="muted small" data-i18n="agent.verifyEditsHint">
+              On (recommended): after each write the file is run through whatever
+              checker this project already has &mdash; node --check, tsc, ruff,
+              gofmt &mdash; and any error goes straight back to the agent, so it
+              finds out immediately that what it wrote does not compile. Costs a
+              second or two per edit.
             </p>
 
             <label for="cfg-maxsteps" data-i18n="agent.maxSteps">Max steps per turn</label>

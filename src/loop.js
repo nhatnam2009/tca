@@ -249,6 +249,28 @@ class SessionHistory {
   }
 }
 
+/**
+ * What a sub-agent is allowed to say to the UI.
+ *
+ * An allowlist rather than a filter on the noisy ones, because the event that has
+ * to be kept out is `done`. A sub-agent finishing emitted a bare `done`, the UI
+ * treated it as the end of the whole turn - closed the message, stopped the
+ * spinner, dropped the streaming state - and then the parent kept talking into a
+ * transcript that had already been sealed off. `subagent_end` reports the same
+ * fact without that side effect.
+ *
+ * Its usage is folded into the parent's spend, so `usage` is redundant too; step
+ * counters and titles belong to the root turn alone.
+ */
+const SUBAGENT_EVENTS = new Set([
+  "tool_start",
+  "tool_end",
+  "tool_note",
+  "text_delta",
+  "approval_request",
+  "approval_closed",
+]);
+
 export class Agent {
   /**
    * @param {object} args
@@ -265,7 +287,7 @@ export class Agent {
     this.emit = emit;
     this.sessionId = sessionId;
     this.kind = kind;
-    this.mode = config.mode === "plan" ? "plan" : "build";
+    this.mode = /** @type {"build"|"plan"} */ (config.mode === "plan" ? "plan" : "build");
     this.controller = new AbortController();
     if (parentSignal) {
       if (parentSignal.aborted) this.controller.abort();
@@ -389,7 +411,9 @@ export class Agent {
     const id = `${this.idPrefix}sub_${++this.subSeq}`;
     const sub = new Agent({
       config: this.config,
-      emit: (e) => this.emit({ ...e, subagent: id }),
+      emit: (e) => {
+        if (SUBAGENT_EVENTS.has(e.type)) this.emit({ ...e, subagent: id });
+      },
       kind: /** @type {"explore"|"general"} */ (kind),
       parentSignal: this.controller.signal,
       maxSteps: SUBAGENT_MAX_STEPS,

@@ -671,3 +671,201 @@ test("write, edit and patch report what actually changed as a diff", async () =>
   const same = await callTool("write_file", { path: "diffed.txt", content: "A\nB\nc\nd\n" }, ctx);
   assert.match(same.output, /already identical/i);
 });
+
+
+test("a sub-agent runs with its own tools and hands back only its answer", async (t) => {
+  // Turns are served in order and the sub-agent shares the provider, so this is
+  // root -> sub -> sub -> root.
+  const fake = fakeProvider([
+    [
+      toolChunk(
+        "call_1",
+        "task",
+        JSON.stringify({
+          description: "read the file",
+          prompt: "read sub-input.txt and tell me the one line it contains",
+          kind: "explore",
+        }),
+      ),
+      finish("tool_calls"),
+    ],
+    [toolChunk("call_2", "read_file", JSON.stringify({ path: "sub-input.txt" })), finish("tool_calls")],
+    [textChunk("sub-input.txt contains: the answer is 42"), finish("stop")],
+    [textChunk("It says the answer is 42."), finish("stop")],
+  ]);
+  const providerPort = await listen(fake.server);
+  writeConfig(providerPort);
+  fs.writeFileSync(path.join(WORKSPACE, "sub-input.txt"), "the answer is 42\n");
+
+  const { server, port, token } = await serve({ port: 0, quiet: true });
+  t.after(() => {
+    server.close();
+    fake.server.close();
+  });
+
+  const { body: session } = await api(port, token, "POST", "/api/sessions");
+  const eventsPromise = collect(port, token, session.id);
+  await new Promise((r) => setTimeout(r, 100));
+  await api(port, token, "POST", `/api/sessions/${session.id}/message`, { text: "what is in sub-input.txt" });
+
+  const events = await eventsPromise;
+  const types = events.map((e) => e.type);
+
+  const started = events.find((e) => e.type === "subagent_start");
+  assert.ok(started, `expected subagent_start, got ${types}`);
+  assert.equal(started.kind, "explore");
+
+  // The sub-agent's own tool activity must be tagged, or the UI cannot nest it
+  // and twenty file reads land in the middle of the parent's answer.
+  const nested = events.find((e) => e.type === "tool_end" && e.subagent);
+  assert.ok(nested, "the sub-agent's tool calls should be tagged with its id");
+  assert.equal(nested.subagent, started.id);
+  assert.equal(nested.name, "read_file");
+
+  const ended = events.find((e) => e.type === "subagent_end");
+  assert.ok(ended);
+  assert.equal(ended.ok, true);
+
+  // A sub-agent must never emit `done`. It used to, and the UI took it as the end
+  // of the whole turn: it closed the message, stopped the spinner and dropped the
+  // streaming state, and then the parent carried on talking into a sealed-off
+  // transcript. subagent_end says the same thing without that side effect.
+  assert.equal(types.filter((x) => x === "done").length, 1, `more than one done: ${types}`);
+  assert.equal(
+    events.filter((e) => e.type === "done" || e.type === "error").every((e) => !e.subagent),
+    true,
+  );
+
+  // What the parent actually receives is one paragraph, not the file dump.
+  const taskEnd = events.find((e) => e.type === "tool_end" && e.name === "task" && !e.subagent);
+  assert.ok(taskEnd, "the parent needs a tool_end for the task itself");
+  assert.equal(taskEnd.ok, true, taskEnd.output);
+  assert.match(taskEnd.output, /the answer is 42/);
+  assert.doesNotMatch(taskEnd.output, /^\d+: /m, "the parent must not receive the numbered file body");
+
+  assert.equal(fake.requests.length, 4);
+  // An explore sub-agent is read-only and cannot delegate further.
+  const subTools = fake.requests[1].tools.map((x) => x.function.name);
+  assert.ok(!subTools.includes("write_file"), `sub-agent was offered write_file: ${subTools}`);
+  assert.ok(!subTools.includes("task"), "sub-agents must not spawn sub-agents");
+  assert.ok(subTools.includes("read_file"));
+  // And its history is its own: the parent's user message is not in it.
+  assert.match(fake.requests[1].messages[1].content, /read sub-input\.txt/);
+});
+
+test("reasoning is streamed separately from the answer", async (t) => {
+  const fake = fakeProvider([
+    [
+      { choices: [{ index: 0, delta: { reasoning_content: "the file is small, just read it" } }] },
+      textChunk("Read it."),
+      finish("stop"),
+    ],
+  ]);
+  const providerPort = await listen(fake.server);
+  writeConfig(providerPort);
+
+  const { server, port, token } = await serve({ port: 0, quiet: true });
+  t.after(() => {
+    server.close();
+    fake.server.close();
+  });
+
+  const { body: session } = await api(port, token, "POST", "/api/sessions");
+  const eventsPromise = collect(port, token, session.id);
+  await new Promise((r) => setTimeout(r, 100));
+  await api(port, token, "POST", `/api/sessions/${session.id}/message`, { text: "read it" });
+
+  const events = await eventsPromise;
+  const thought = events.filter((e) => e.type === "reasoning_delta").map((e) => e.text).join("");
+  const said = events.filter((e) => e.type === "text_delta").map((e) => e.text).join("");
+  assert.equal(thought, "the file is small, just read it");
+  assert.equal(said, "Read it.");
+
+  // Stored on the message, so a reload can still show it, and separate from the
+  // content so it never gets mistaken for the answer.
+  const { body: stored } = await api(port, token, "GET", `/api/sessions/${session.id}`);
+  const assistant = stored.messages.find((m) => m.role === "assistant");
+  assert.equal(assistant.reasoning, "the file is small, just read it");
+  assert.equal(assistant.content, "Read it.");
+});
+
+test("plan mode is read-only over HTTP, and the toggle persists", async (t) => {
+  const fake = fakeProvider([
+    [
+      toolChunk("call_1", "write_file", JSON.stringify({ path: "planned.txt", content: "nope\n" })),
+      finish("tool_calls"),
+    ],
+    [textChunk("I would create planned.txt."), finish("stop")],
+  ]);
+  const providerPort = await listen(fake.server);
+  writeConfig(providerPort);
+
+  const { server, port, token } = await serve({ port: 0, quiet: true });
+  t.after(() => {
+    server.close();
+    fake.server.close();
+  });
+
+  const set = await api(port, token, "POST", "/api/mode", { mode: "plan" });
+  assert.equal(set.status, 200);
+  assert.equal(set.body.mode, "plan");
+  const { body: state } = await api(port, token, "GET", "/api/state");
+  assert.equal(state.mode, "plan", "the UI reads the mode back from /api/state on reload");
+
+  const { body: session } = await api(port, token, "POST", "/api/sessions");
+  const eventsPromise = collect(port, token, session.id);
+  await new Promise((r) => setTimeout(r, 100));
+  await api(port, token, "POST", `/api/sessions/${session.id}/message`, {
+    text: "create planned.txt",
+    mode: "plan",
+  });
+
+  const events = await eventsPromise;
+  const toolEnd = events.find((e) => e.type === "tool_end");
+  assert.ok(toolEnd, `expected the call to be attempted and refused, got ${events.map((e) => e.type)}`);
+  assert.equal(toolEnd.ok, false);
+  assert.match(toolEnd.output, /plan mode is read-only/);
+  assert.equal(fs.existsSync(path.join(WORKSPACE, "planned.txt")), false);
+
+  // The spec is withheld too, so a model with no memory of it never tries.
+  const offered = fake.requests[0].tools.map((x) => x.function.name);
+  assert.ok(!offered.includes("write_file"));
+
+  // Leave the shared config as the other tests expect it.
+  await api(port, token, "POST", "/api/mode", { mode: "build" });
+});
+
+test("a write is checked, and the checker output reaches the model", async (t) => {
+  const fake = fakeProvider([
+    [
+      toolChunk(
+        "call_1",
+        "write_file",
+        JSON.stringify({ path: "checked.mjs", content: "export const broken = ;\n" }),
+      ),
+      finish("tool_calls"),
+    ],
+    [textChunk("Fixing it."), finish("stop")],
+  ]);
+  const providerPort = await listen(fake.server);
+  writeConfig(providerPort);
+
+  const { server, port, token } = await serve({ port: 0, quiet: true });
+  t.after(() => {
+    server.close();
+    fake.server.close();
+  });
+
+  const { body: session } = await api(port, token, "POST", "/api/sessions");
+  const eventsPromise = collect(port, token, session.id);
+  await new Promise((r) => setTimeout(r, 100));
+  await api(port, token, "POST", `/api/sessions/${session.id}/message`, { text: "write checked.mjs" });
+
+  await eventsPromise;
+
+  // The whole point: the model is told, in the same message as the edit, that what
+  // it just wrote does not parse. Without this it reports success and moves on.
+  const back = fake.requests[1].messages.at(-1).content;
+  assert.match(back, /checked after this change/);
+  assert.match(back, /node --check/);
+});
