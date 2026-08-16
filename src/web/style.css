@@ -1232,6 +1232,10 @@ h4.md-heading { font-size: 0.95rem; color: var(--fg); }
 h5.md-heading { font-size: 0.85rem; color: var(--muted); }
 .md-list { margin: 4px 0; padding-left: 22px; display: grid; gap: 4px; }
 .md-list li { line-height: 1.55; overflow-wrap: anywhere; }
+/* Nested lists sit inside an <li>; grid gap would double-space them. */
+.md-list .md-list { margin: 4px 0 0; gap: 3px; }
+.md-task-item { list-style: none; margin-left: -18px; }
+.md-task { color: var(--accent); font-size: 1.05em; }
 .md-blockquote { border-left: 3px solid var(--border-strong); padding: 4px 12px; margin: 0; background: rgba(85,237,160,.04); border-radius: 0 8px 8px 0; }
 .md-blockquote p { color: var(--muted); }
 .inline-code { font-family: var(--mono); font-size: 0.83em; background: rgba(255,255,255,.08); padding: 2px 5px; border-radius: 5px; color: var(--accent); }

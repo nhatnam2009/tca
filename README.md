@@ -1,4 +1,4 @@
-# tca
+﻿# tca
 
 A coding agent with a web UI, built to run on a phone under [Termux](https://termux.dev).
 Zero runtime dependencies: `pkg install nodejs`, clone, run. No `npm install`, no
@@ -61,11 +61,11 @@ Model data comes from [models.dev](https://models.dev), the same catalog opencod
 uses: 185 providers, 6583 models, of which 5551 can call tools. Only tool-capable
 models are offered, because an agent that cannot call tools is useless.
 
-Base URLs and wire formats live in `src/providers.js` — 30 providers, each probed
+Base URLs and wire formats live in `src/providers.js` â€” 30 providers, each probed
 against its real endpoint. Two wire formats cover them:
 
-- `anthropic` → `POST {baseUrl}/v1/messages`
-- `openai` → `POST {baseUrl}/chat/completions` (~165 of the 185 providers, including
+- `anthropic` â†’ `POST {baseUrl}/v1/messages`
+- `openai` â†’ `POST {baseUrl}/chat/completions` (~165 of the 185 providers, including
   Gemini through its OpenAI-compatible surface)
 
 Anything not in the table works via the `other` provider: paste a base URL.
@@ -77,7 +77,7 @@ hand.
 
 A 58 KB offline seed catalog (254 models) ships in git so a fresh phone works
 with no network. The full 3.8 MB models.dev dump is only downloaded if you tap
-"Download full catalog" in Settings — never automatically, since mobile data is
+"Download full catalog" in Settings â€” never automatically, since mobile data is
 usually metered.
 
 `src/recommended.js` is a curated shortlist in the spirit of OpenCode Zen, since
@@ -105,7 +105,7 @@ sitting there, write the env var instead and export it from `~/.bashrc`:
 ```
 
 Placeholders are expanded at load time and never written back to disk. Chat
-history always stays in `~/.tca/sessions/`, never on `/sdcard` — it contains
+history always stays in `~/.tca/sessions/`, never on `/sdcard` â€” it contains
 whatever the agent read out of your files.
 
 ## Safety
@@ -124,7 +124,7 @@ Three rails, and the tests in `test/agent.test.mjs` cover all of them:
   Stop closes it too.
 - **File changes** are allowed by default, because tapping Allow for every write
   on a phone makes the agent unusable and workspace confinement already bounds
-  the damage. Set `autoApproveEdits: false` (Settings → "Auto-approve file
+  the damage. Set `autoApproveEdits: false` (Settings â†’ "Auto-approve file
   changes") and `write_file`, `edit_file`, `patch_file`, `move_file` and
   `delete_file` each ask first. Either way the tool output contains a diff of
   what changed, so you can see it after the fact.
@@ -207,18 +207,21 @@ install.sh           one-shot Termux install (interactive)
 setup.sh             minimal install, also works on a desktop
 tools/gen-seed.mjs   regenerates the offline catalog
 test/agent.test.mjs  end-to-end against a fake provider
+test/markdown.test.mjs  the UI renderer, in a DOM stub
 ```
 
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 22 tests, no network or API key needed
+node --test test/*.test.mjs     # 38 tests, no network or API key needed
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```
 
 Tests run the real daemon and the real agent loop against a fake local server
 that speaks the OpenAI wire format, so they cover tool execution, approval
-handling, auth and path confinement without spending tokens.
+handling, auth and path confinement without spending tokens. `markdown.test.mjs`
+loads `src/web/app.js` into a small DOM stub that has no `innerHTML` on it, so
+the renderer is pinned down and cannot quietly grow an XSS hole.
 
 Types are JSDoc, checked with `tsc --noEmit` on a dev machine. There is no
 TypeScript build: the phone runs the source as-is.

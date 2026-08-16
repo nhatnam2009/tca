@@ -170,14 +170,14 @@ async function api(path, { method = "GET", body } = {}) {
  * Zero-dependency markdown renderer. Supports:
  * - Fenced code blocks (``` lang) with copy button
  * - Headings (# ## ###)
- * - Bold (**text**), italic (*text*), inline code (`code`)
- * - Unordered lists (- item, * item)
- * - Ordered lists (1. item)
+ * - Bold (**text**), italic (*text*), strikethrough (~~text~~), inline code
+ * - Lists, ordered or not, nested to any depth, plus task lists (- [x] done)
  * - Blockquotes (> text)
  * - Horizontal rules (---)
- * - Links [text](url) — rendered as plain text for security (no innerHTML)
- * - Tables (| col | col |)
+ * - Links [text](url) - rendered as plain text for security (no innerHTML)
+ * - Tables, with or without the outer pipes
  * Server/model output is untrusted: all text uses textContent, never innerHTML.
+ * test/markdown.test.mjs loads this file into a DOM stub and pins the output.
  */
 
 /** Split raw text into fenced-code and prose segments. */
@@ -219,21 +219,23 @@ function splitFences(src) {
  */
 function renderInline(text) {
   const frag = document.createDocumentFragment();
-  // Pattern: **bold** | *italic* | `code` | [link](url)
-  const re = /\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g;
+  // Pattern: `code` | **bold** | ~~strike~~ | *italic* | [link](url)
+  // Code first, so `**not bold**` inside backticks stays literal.
+  const re = /`([^`]+)`|\*\*(.+?)\*\*|~~(.+?)~~|\*(.+?)\*|\[([^\]]+)\]\(([^)]+)\)/g;
   let last = 0;
   let m;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
-    if (m[1] != null) { const b = document.createElement('strong'); b.textContent = m[1]; frag.appendChild(b); }
-    else if (m[2] != null) { const i = document.createElement('em'); i.textContent = m[2]; frag.appendChild(i); }
-    else if (m[3] != null) { const c = document.createElement('code'); c.className = 'inline-code'; c.textContent = m[3]; frag.appendChild(c); }
-    else if (m[4] != null) {
+    if (m[1] != null) { const c = document.createElement('code'); c.className = 'inline-code'; c.textContent = m[1]; frag.appendChild(c); }
+    else if (m[2] != null) { const b = document.createElement('strong'); b.textContent = m[2]; frag.appendChild(b); }
+    else if (m[3] != null) { const s = document.createElement('s'); s.textContent = m[3]; frag.appendChild(s); }
+    else if (m[4] != null) { const i = document.createElement('em'); i.textContent = m[4]; frag.appendChild(i); }
+    else if (m[5] != null) {
       // Links: show as "text (url)" safely without opening innerHTML attack
       const span = document.createElement('span');
       span.className = 'md-link';
-      const t = document.createElement('span'); t.textContent = m[4];
-      const u = document.createElement('span'); u.className = 'md-link-url'; u.textContent = ` (${m[5]})`;
+      const t = document.createElement('span'); t.textContent = m[5];
+      const u = document.createElement('span'); u.className = 'md-link-url'; u.textContent = ` (${m[6]})`;
       span.append(t, u);
       frag.appendChild(span);
     }
@@ -241,6 +243,113 @@ function renderInline(text) {
   }
   if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
   return frag;
+}
+
+/* ------------------------------------------------- markdown block detection */
+
+/** "  - item", "* item", "1. item", "2) item" - captures indent, marker, text. */
+const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+
+/** The |---|:--:| line under a table header. Must contain a dash. */
+function isTableSeparator(line) {
+  const s = (line || "").trim();
+  return s.includes("-") && /^[|\s:-]+$/.test(s);
+}
+
+/** A table row starts a table only if the next line is its separator. */
+function startsTable(lines, i) {
+  return lines[i].includes("|") && i + 1 < lines.length && isTableSeparator(lines[i + 1]);
+}
+
+/**
+ * Split a table row into cells. Both "| a | b |" and "a | b" are accepted: only
+ * the outermost pipes are optional delimiters, which is what every markdown
+ * dialect does and what models emit when they drop the outer pipes.
+ */
+function tableCells(line) {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+  return s.split("|").map((c) => c.trim());
+}
+
+/** True when this line opens a block that a paragraph must not swallow. */
+function startsBlock(lines, i) {
+  const line = lines[i];
+  return (
+    !line.trim() ||
+    /^#{1,3}\s/.test(line) ||
+    LIST_ITEM.test(line) ||
+    line === ">" ||
+    line.startsWith("> ") ||
+    /^(-{3,}|\*{3,}|_{3,})$/.test(line.trim()) ||
+    startsTable(lines, i)
+  );
+}
+
+/**
+ * Collect a run of list items, keeping each one's indent so nesting can be
+ * rebuilt. An indented plain line continues the previous item.
+ */
+function collectListItems(lines, start) {
+  const items = [];
+  let i = start;
+  while (i < lines.length) {
+    const m = LIST_ITEM.exec(lines[i]);
+    if (m) {
+      items.push({
+        indent: m[1].replace(/\t/g, "  ").length,
+        ordered: /\d/.test(m[2]),
+        text: m[3],
+      });
+      i++;
+      continue;
+    }
+    // Lazy continuation: "  more text" under an item belongs to that item.
+    if (items.length && lines[i].trim() && /^\s{2,}\S/.test(lines[i])) {
+      items[items.length - 1].text += ` ${lines[i].trim()}`;
+      i++;
+      continue;
+    }
+    break;
+  }
+  return { items, next: i };
+}
+
+/** "[ ] thing" / "[x] thing" -> a checkbox glyph plus the rest. */
+function listItemContent(text) {
+  const task = /^\[([ xX])\]\s+(.*)$/.exec(text);
+  if (!task) return renderInline(text);
+  const frag = document.createDocumentFragment();
+  const box = el("span", "md-task", task[1] === " " ? "\u2610" : "\u2611");
+  frag.append(box, document.createTextNode(" "), renderInline(task[2]));
+  return frag;
+}
+
+/**
+ * Turn a flat item list into nested <ul>/<ol>. Deeper items go inside the last
+ * <li>; a marker change at the same depth starts a sibling list.
+ * @returns {{node: HTMLElement, next: number}}
+ */
+function buildList(items, from, indent) {
+  const ordered = items[from].ordered;
+  const list = el(ordered ? "ol" : "ul", "md-list");
+  let k = from;
+  while (k < items.length && items[k].indent >= indent) {
+    if (items[k].indent > indent) {
+      const nested = buildList(items, k, items[k].indent);
+      (list.lastElementChild || list).appendChild(nested.node);
+      k = nested.next;
+      continue;
+    }
+    if (items[k].ordered !== ordered) break;
+    const li = document.createElement("li");
+    if (items[k].text.startsWith("[")) li.className = "md-task-item";
+    li.appendChild(listItemContent(items[k].text));
+    list.appendChild(li);
+    k++;
+  }
+  return { node: list, next: k };
 }
 
 /** Parse a group of prose lines into block-level elements. */
@@ -287,14 +396,13 @@ function renderProseLines(lines) {
     }
 
     // Table
-    if (line.includes('|') && i + 1 < lines.length && /^[|\s:-]+$/.test(lines[i + 1])) {
+    if (startsTable(lines, i)) {
       const table = document.createElement('table');
       table.className = 'md-table';
       const thead = document.createElement('thead');
       const tbody = document.createElement('tbody');
-      const headerCells = line.split('|').map(c => c.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
       const tr = document.createElement('tr');
-      for (const cell of headerCells) {
+      for (const cell of tableCells(line)) {
         const th = document.createElement('th');
         th.appendChild(renderInline(cell));
         tr.appendChild(th);
@@ -303,9 +411,8 @@ function renderProseLines(lines) {
       table.appendChild(thead);
       i += 2; // skip header + separator
       while (i < lines.length && lines[i].includes('|')) {
-        const rowCells = lines[i].split('|').map(c => c.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
         const row = document.createElement('tr');
-        for (const cell of rowCells) {
+        for (const cell of tableCells(lines[i])) {
           const td = document.createElement('td');
           td.appendChild(renderInline(cell));
           row.appendChild(td);
@@ -318,42 +425,22 @@ function renderProseLines(lines) {
       continue;
     }
 
-    // Unordered list
-    if (/^[-*+]\s/.test(line)) {
-      const ul = document.createElement('ul');
-      ul.className = 'md-list';
-      while (i < lines.length && /^[-*+]\s/.test(lines[i])) {
-        const li = document.createElement('li');
-        li.appendChild(renderInline(lines[i].replace(/^[-*+]\s/, '')));
-        ul.appendChild(li);
-        i++;
+    // Lists, ordered or not, nested to any depth
+    if (LIST_ITEM.test(line)) {
+      const { items, next } = collectListItems(lines, i);
+      let k = 0;
+      while (k < items.length) {
+        const built = buildList(items, k, items[k].indent);
+        frag.appendChild(built.node);
+        k = built.next > k ? built.next : k + 1; // never stall
       }
-      frag.appendChild(ul);
+      i = next;
       continue;
     }
 
-    // Ordered list
-    if (/^\d+\.\s/.test(line)) {
-      const ol = document.createElement('ol');
-      ol.className = 'md-list';
-      while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
-        const li = document.createElement('li');
-        li.appendChild(renderInline(lines[i].replace(/^\d+\.\s/, '')));
-        ol.appendChild(li);
-        i++;
-      }
-      frag.appendChild(ol);
-      continue;
-    }
-
-    // Paragraph: collect consecutive non-blank, non-block lines
+    // Paragraph: collect consecutive lines until something else starts
     const paraLines = [];
-    while (i < lines.length && lines[i].trim() &&
-      !/^#{1,3}\s/.test(lines[i]) &&
-      !/^[-*+]\s/.test(lines[i]) &&
-      !/^\d+\.\s/.test(lines[i]) &&
-      !lines[i].startsWith('> ') &&
-      !/^-{3,}$/.test(lines[i].trim())) {
+    while (i < lines.length && !startsBlock(lines, i)) {
       paraLines.push(lines[i]);
       i++;
     }
@@ -362,6 +449,8 @@ function renderProseLines(lines) {
       p.className = 'md-para';
       p.appendChild(renderInline(paraLines.join(' ')));
       frag.appendChild(p);
+    } else {
+      i++; // defensive: never loop forever on an unrecognised line
     }
   }
   return frag;
