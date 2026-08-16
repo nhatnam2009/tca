@@ -328,3 +328,67 @@ test("the shipped i18n table is the one the browser gets", () => {
     assert.equal(fs.existsSync(path.join(web, name)), false, `src/web/${name} would duplicate src/i18n.js`);
   }
 });
+
+/* ------------------------------------------------------------ rish handling */
+
+test("copyRishFiles finds the export, copies both files, and says why when it cannot", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tca-rish-"));
+  const original = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const { copyRishFiles, rishFilesPresent, rishReady } = await import(
+      `../src/privilege.js?rish=${Date.now()}`
+    );
+
+    // Nothing anywhere: the message has to distinguish "no Download directory"
+    // (storage permission was refused) from "the files are not there".
+    const none = copyRishFiles();
+    assert.equal(none.ok, false);
+    assert.equal(none.errKey, "priv.shizuku.storageFirst");
+    assert.equal(rishReady(), false);
+
+    // Shizuku exports into Download.
+    const dl = path.join(home, "storage", "shared", "Download");
+    fs.mkdirSync(dl, { recursive: true });
+    fs.writeFileSync(path.join(dl, "rish"), "#!/system/bin/sh\necho hi\n");
+    fs.writeFileSync(path.join(dl, "rish_shizuku.dex"), "dex");
+
+    const copied = copyRishFiles();
+    assert.equal(copied.ok, true, JSON.stringify(copied));
+    assert.deepEqual(copied.copied.slice().sort(), ["rish", "rish_shizuku.dex"]);
+    assert.equal(copied.from, dl);
+    assert.deepEqual(rishFilesPresent(), { script: true, dex: true });
+    assert.equal(rishReady(), true);
+    assert.equal(fs.readFileSync(path.join(home, "rish"), "utf8").includes("echo hi"), true);
+
+    // A half-finished export must not be reported as success.
+    fs.rmSync(path.join(home, "rish"));
+    fs.rmSync(path.join(home, "rish_shizuku.dex"));
+    fs.rmSync(path.join(dl, "rish_shizuku.dex"));
+    const partial = copyRishFiles();
+    assert.equal(partial.ok, false);
+    assert.equal(rishReady(), false, "rish alone is not enough, it needs the dex");
+  } finally {
+    if (original === undefined) delete process.env.HOME;
+    else process.env.HOME = original;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the rish copy route answers with a translation key, not a stack trace", async (t) => {
+  fs.writeFileSync(
+    process.env.TCA_CONFIG,
+    JSON.stringify({ active: "", providers: {}, workspace: path.join(TMP, "ws") }),
+  );
+  const { server, port, token } = await serve({ port: 0, quiet: true });
+  t.after(() => server.close());
+
+  const res = await fetch(`http://127.0.0.1:${port}/api/privilege/copy-rish`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(res.status, 400, "there is no Shizuku export on a dev machine");
+  const body = await res.json();
+  assert.ok(body.errKey, "the UI needs a key it can translate");
+  assert.ok(body.errKey in DICT.vi, `${body.errKey} has no Vietnamese text`);
+});

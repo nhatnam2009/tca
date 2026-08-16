@@ -122,6 +122,67 @@ export function rishFilesPresent() {
   return { script: fs.existsSync(script), dex: fs.existsSync(dex) };
 }
 
+/** Where Android puts a file the Shizuku app exported. */
+function downloadDirs() {
+  const home = process.env.HOME || os.homedir();
+  return [
+    path.join(home, "storage", "shared", "Download"),
+    path.join(home, "storage", "shared", "Downloads"),
+    path.join(home, "storage", "downloads"),
+    "/sdcard/Download",
+  ];
+}
+
+/**
+ * Copy `rish` and `rish_shizuku.dex` out of Download into the home directory.
+ *
+ * Done with fs, not by shelling out to `cp ~/storage/shared/Download/rish* ~/`.
+ * A glob in a shell string is exactly the kind of thing that quietly does the
+ * wrong thing when a path contains a space, and there is no reason to spawn a
+ * process to copy two files.
+ * @returns {{ok: boolean, errKey?: string, from?: string, copied: string[]}}
+ */
+export function copyRishFiles() {
+  const { home, script, dex } = rishPaths();
+  const wanted = ["rish", "rish_shizuku.dex"];
+
+  for (const dir of downloadDirs()) {
+    if (!fs.existsSync(dir)) continue;
+    if (!fs.existsSync(path.join(dir, "rish"))) continue;
+    const copied = [];
+    for (const name of wanted) {
+      const src = path.join(dir, name);
+      if (!fs.existsSync(src)) continue;
+      fs.copyFileSync(src, path.join(home, name));
+      copied.push(name);
+    }
+    if (copied.includes("rish")) {
+      try {
+        fs.chmodSync(script, 0o755);
+      } catch {
+        // Not fatal: rish is invoked through the system shell, not executed.
+      }
+    }
+    resetRishProbe();
+    invalidateBackendCache();
+    return { ok: copied.length === wanted.length, from: dir, copied, errKey: copied.length ? undefined : "priv.err.rish_missing" };
+  }
+
+  // No Download directory at all usually means storage permission was refused.
+  const anyDir = downloadDirs().some((d) => fs.existsSync(d));
+  return {
+    ok: false,
+    copied: [],
+    errKey: anyDir ? "priv.err.rish_missing" : "priv.shizuku.storageFirst",
+  };
+}
+
+/** Present, and does it exist next to the dex it needs? */
+export function rishReady() {
+  const files = rishFilesPresent();
+  return files.script && files.dex;
+}
+
 /**
  * How to hand a command to rish. Not documented anywhere official, and it has
  * changed between Shizuku versions, so both known shapes are tried once and the

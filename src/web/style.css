@@ -880,44 +880,6 @@ pre {
   overflow-y: auto;
 }
 
-/* --------------------------------------------------------------- status list */
-
-.status-list {
-  display: grid;
-  gap: 8px;
-  margin: 6px 0 10px;
-}
-.status-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-3);
-}
-.status-dot {
-  flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  margin-top: 5px;
-  border-radius: 50%;
-}
-.status-dot.ok { background: var(--ok); }
-.status-dot.bad { background: var(--danger); }
-.status-dot.neutral { background: var(--muted); }
-.status-body { min-width: 0; }
-.status-label {
-  margin: 0;
-  font-size: 0.85rem;
-  font-family: var(--mono);
-  overflow-wrap: anywhere;
-}
-.status-fix {
-  margin: 4px 0 0;
-  white-space: pre-wrap;
-}
-
 /* ------------------------------------------------------------------- chips */
 
 .chips {
@@ -1358,6 +1320,12 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
 .power-item-why {
   line-height: 1.55;
 }
+.power-item-meta {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+}
 .power-item-fix {
   color: var(--accent);
   font-family: var(--mono);
@@ -1397,6 +1365,159 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
   font-size: 0.85rem;
 }
 .power-done-list li {
+  overflow-wrap: anywhere;
+}
+.power-done-list .mark {
+  display: inline-block;
+  width: 1.1em;
+  color: var(--ok);
+}
+.power-done-list li.unknown .mark {
+  color: var(--muted);
+}
+.power-ok-note {
+  margin: 0;
+  color: var(--ok);
+}
+.power-item.good {
+  border-left-color: var(--ok);
+}
+.power-item-result {
+  margin: 0;
+}
+.power-item-result.ok { color: var(--ok); }
+.power-item-result.warn { color: var(--warn); }
+.power-log,
+.power-log > summary {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.power-log > summary {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.power-log pre {
+  max-height: 40vh;
+}
+
+/* ------------------------------------------------- the privilege sub-wizard */
+
+/* Four ways to grant Android privileges. Presented as a list of choices rather
+   than a single button, because which one is cheapest depends on the phone. */
+
+.priv-methods {
+  display: grid;
+  gap: 8px;
+}
+.priv-method {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.priv-method:hover,
+.priv-method:focus-visible {
+  border-color: var(--border-strong);
+  background: var(--bg-2);
+}
+.priv-method-title {
+  font-weight: 600;
+}
+.priv-method-desc {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.priv-flow {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.priv-flow p {
+  margin: 0;
+}
+.priv-back {
+  justify-self: start;
+  padding: 0;
+  min-height: 32px;
+}
+.priv-flow-title {
+  margin: 0;
+  font-size: 1rem;
+}
+.priv-step-count {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+.priv-step-title {
+  margin: 6px 0 0;
+  font-size: 0.92rem;
+}
+.priv-steps {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 8px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+.priv-field {
+  display: grid;
+  gap: 4px;
+}
+.priv-field label {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.priv-field input {
+  font-family: var(--mono);
+}
+.priv-flow-result {
+  margin: 0;
+}
+.priv-flow-result.warn {
+  color: var(--warn);
+}
+.priv-applied {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.priv-applied p {
+  margin: 0;
+}
+.priv-applied-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 0.82rem;
+}
+.priv-applied-list li.ok { color: var(--ok); }
+.priv-applied-list li.warn { color: var(--warn); }
+
+.mono {
+  font-family: var(--mono);
+  font-size: 0.78rem;
   overflow-wrap: anywhere;
 }
 

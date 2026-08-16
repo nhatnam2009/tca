@@ -148,8 +148,6 @@ export const DICT = {
     "priv.err.rish_missing": "Chưa thấy rish trong thư mục nhà. Làm theo hướng dẫn Shizuku ở trên.",
     "priv.err.rish_dead": "Có file rish nhưng chạy không được — thường là app Shizuku chưa được Start.",
     "priv.err.no_root": "Không dùng được su. Máy này có thể chưa root.",
-
-    // -------------------------------------------------------- trạng thái
     "status.phantom.value": "Giới hạn tiến trình con: {n}",
     "status.phantom.unknown": "Giới hạn tiến trình con: chưa đọc được (cần quyền nâng cao)",
     "status.env_keys": "API key trong môi trường: {list}",
@@ -258,7 +256,6 @@ export const DICT = {
       "File này là JSON thuần — bạn có thể sửa tay bằng bất kỳ app soạn thảo rồi bấm “Tải lại từ đĩa”.",
     "settings.save": "Lưu cài đặt",
     "settings.reload": "Tải lại từ đĩa",
-    "settings.saved": "Đã lưu cài đặt",
     "settings.langLabel": "Ngôn ngữ",
     "settings.langHint": "Áp dụng cho cả web UI và lệnh tca doctor trong terminal.",
 
@@ -303,9 +300,6 @@ export const DICT = {
     "catalog.source.seed": "danh sách offline đi kèm",
     "catalog.info": "Danh mục: {source} · {models} model gọi được tool · {providers} provider · tạo ngày {generated}",
 
-    "status.legend": "Trạng thái Android",
-    "status.hint": "Kiểm tra môi trường — giống lệnh tca doctor trong terminal.",
-
     "agent.legend": "Agent",
     "agent.workspace": "Thư mục làm việc",
     "agent.workspaceHint": "Agent chỉ được đọc và ghi bên trong thư mục này.",
@@ -341,6 +335,48 @@ export const DICT = {
     "ui.notTermux": "Không chạy trên Termux — bỏ qua các mục chỉ dành cho Android.",
     "ui.getApiKey": "Lấy API key",
     "ui.manualBaseUrl": "cần nhập base URL thủ công",
+
+    // ------------------------------------------------------------ tab Power
+    "power.allGood": "Mọi thứ ở tầng này đã sẵn sàng.",
+    "power.installed": "Đã cài xong: {title}",
+    "power.installFailed": "Cài thất bại. Xem chi tiết bên dưới.",
+    "power.installLog": "Chi tiết",
+    "power.privSection": "Quyền nâng cao",
+    "power.chooseMethod": "Chọn cách cấp quyền:",
+    "power.back": "‹ Quay lại",
+    "power.step": "Bước {n}/{total}",
+    "power.applied": "Đã áp dụng {ok}/{total} mở khoá",
+    "power.appliedAll": "Đã mở khoá xong. Agent tạo bao nhiêu tiến trình cũng được.",
+    "power.appliedSome": "Một số mở khoá bị từ chối. Vài hãng chặn appops kể cả qua ADB; mục quan trọng nhất là mục đầu.",
+    "power.rebootWarn": "Ghép nối ADB không dây mất sau khi khởi động lại máy. Lúc đó chạy lại phần này.",
+
+    "priv.pair.installAdb": "Cài android-tools",
+    "priv.pair.s1.title": "Bật Gỡ lỗi không dây",
+    "priv.pair.s1.body":
+      "Cài đặt → Tùy chọn nhà phát triển → Gỡ lỗi không dây → Bật. Chưa thấy Tùy chọn nhà phát triển? Vào Cài đặt → Giới thiệu điện thoại → bấm “Số bản dựng” 7 lần.",
+    "priv.pair.s1.done": "Đã bật, tiếp →",
+    "priv.pair.s2.title": "Nhập mã ghép nối",
+    "priv.pair.s2.body":
+      "Bấm “Ghép nối thiết bị bằng mã ghép nối”. Nó hiện một địa chỉ IP:PORT và một mã 6 số. Cổng này KHÁC cổng ở màn hình chính.",
+    "priv.pair.addrLabel": "IP:PORT ghép nối",
+    "priv.pair.codeLabel": "Mã 6 số",
+    "priv.pair.doPair": "Ghép nối",
+    "priv.pair.paired": "Ghép nối thành công.",
+    "priv.pair.s3.title": "Kết nối",
+    "priv.pair.s3.body": "Quay lại màn hình Gỡ lỗi không dây chính và đọc IP:PORT ở đó — cổng khác với cổng ghép nối.",
+    "priv.pair.connectLabel": "IP:PORT kết nối",
+    "priv.pair.doConnect": "Kết nối và mở khoá",
+
+    "priv.shizuku.s1": "Cài app Shizuku từ F-Droid hoặc Google Play.",
+    "priv.shizuku.s2": "Mở Shizuku → bấm Start. Shizuku tự lo phần ghép nối, chỉ một lần.",
+    "priv.shizuku.s3": "Trong Shizuku chọn “Use Shizuku in terminal apps” → export file ra thư mục Download.",
+    "priv.shizuku.s4": "Copy 2 file đó vào Termux, rồi bấm kiểm tra.",
+    "priv.shizuku.copy": "Copy file rish từ Download",
+    "priv.shizuku.copied": "Đã copy. Bấm kiểm tra.",
+    "priv.shizuku.check": "Kiểm tra rish",
+    "priv.shizuku.storageFirst": "Cần quyền bộ nhớ trước. Chạy termux-setup-storage trong Termux.",
+
+    "priv.root.check": "Thử bằng su",
   },
 
   en: {
@@ -581,7 +617,6 @@ export const DICT = {
       "This file is plain JSON — you can also edit it by hand with any text editor and press “Reload from disk”.",
     "settings.save": "Save settings",
     "settings.reload": "Reload from disk",
-    "settings.saved": "Settings saved",
     "settings.langLabel": "Language",
     "settings.langHint": "Applies to the web UI and to tca doctor in the terminal.",
 
@@ -626,9 +661,6 @@ export const DICT = {
     "catalog.source.seed": "bundled offline list",
     "catalog.info": "Catalog: {source} · {models} tool-capable models · {providers} providers · generated {generated}",
 
-    "status.legend": "Android status",
-    "status.hint": "Environment checks — the same as tca doctor in the terminal.",
-
     "agent.legend": "Agent",
     "agent.workspace": "Workspace directory",
     "agent.workspaceHint": "The agent may only read and write inside this directory.",
@@ -664,6 +696,48 @@ export const DICT = {
     "ui.notTermux": "Not running under Termux — Android-only checks are skipped.",
     "ui.getApiKey": "Get an API key",
     "ui.manualBaseUrl": "needs a manual base URL",
+
+    // ------------------------------------------------------------ Power tab
+    "power.allGood": "Everything in this tier is ready.",
+    "power.installed": "Installed: {title}",
+    "power.installFailed": "Install failed. Details below.",
+    "power.installLog": "Details",
+    "power.privSection": "Elevated privileges",
+    "power.chooseMethod": "Choose how to grant them:",
+    "power.back": "‹ Back",
+    "power.step": "Step {n} of {total}",
+    "power.applied": "Applied {ok} of {total} unlocks",
+    "power.appliedAll": "Unlocked. The agent can spawn as many processes as it needs.",
+    "power.appliedSome": "Some unlocks were refused. Some vendors block appops even over ADB; the first one is what matters.",
+    "power.rebootWarn": "Wireless ADB pairing is lost when the phone reboots. Come back here after a restart.",
+
+    "priv.pair.installAdb": "Install android-tools",
+    "priv.pair.s1.title": "Turn on Wireless debugging",
+    "priv.pair.s1.body":
+      "Settings → Developer options → Wireless debugging → on. No Developer options? Settings → About phone → tap “Build number” seven times.",
+    "priv.pair.s1.done": "It's on, next →",
+    "priv.pair.s2.title": "Enter the pairing code",
+    "priv.pair.s2.body":
+      "Tap “Pair device with pairing code”. It shows an IP:PORT and a 6-digit code. This port is NOT the one on the main screen.",
+    "priv.pair.addrLabel": "Pairing IP:PORT",
+    "priv.pair.codeLabel": "6-digit code",
+    "priv.pair.doPair": "Pair",
+    "priv.pair.paired": "Paired.",
+    "priv.pair.s3.title": "Connect",
+    "priv.pair.s3.body": "Go back to the main Wireless debugging screen and read the IP:PORT there — a different port from the pairing one.",
+    "priv.pair.connectLabel": "Connect IP:PORT",
+    "priv.pair.doConnect": "Connect and unlock",
+
+    "priv.shizuku.s1": "Install the Shizuku app from F-Droid or Google Play.",
+    "priv.shizuku.s2": "Open it and press Start. Shizuku does its own pairing, once.",
+    "priv.shizuku.s3": "In Shizuku choose “Use Shizuku in terminal apps” → export the files to Download.",
+    "priv.shizuku.s4": "Copy those two files into Termux, then press check.",
+    "priv.shizuku.copy": "Copy the rish files from Download",
+    "priv.shizuku.copied": "Copied. Press check.",
+    "priv.shizuku.check": "Check rish",
+    "priv.shizuku.storageFirst": "Storage permission is needed first. Run termux-setup-storage in Termux.",
+
+    "priv.root.check": "Try su",
   },
 };
 

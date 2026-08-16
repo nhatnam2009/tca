@@ -140,7 +140,6 @@ function redrawDynamicText() {
     fillSessionSelect();
     renderCatalogInfo();
     if (powerData) renderPower(powerData);
-    if (statusData) renderAndroidStatus(statusData);
   } catch {
     // A redraw is cosmetic; never let it break a language switch.
   }
@@ -265,11 +264,18 @@ async function api(path, { method = "GET", body } = {}) {
   if (res.status === 401) { onUnauthorized(); throw new Error("Unauthorized"); }
   if (!res.ok) {
     let msg = `${method} ${path} failed (${res.status})`;
+    let payload = null;
     try {
-      const j = await res.json();
-      if (j && (j.error || j.message)) msg = String(j.error || j.message);
+      payload = await res.json();
+      if (payload && (payload.error || payload.message)) msg = String(payload.error || payload.message);
     } catch {}
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status;
+    // Some routes answer with a translation key instead of prose, so the caller
+    // can show the message in the user's language. Carry it through.
+    if (payload && payload.errKey) err.errKey = payload.errKey;
+    if (payload) err.payload = payload;
+    throw err;
   }
   const text = await res.text();
   return text ? JSON.parse(text) : null;
@@ -670,9 +676,8 @@ let turn = null; // { bubble, body, text:{node,raw}|null, footer, tools:Map }
 let stick = true; // auto-scroll only while the user sits at the bottom
 /** approval id -> settle(label), so the server can close a card the user ignored. */
 const approvals = new Map();
-/** Last /api/status and /api/capabilities payloads, kept so a language switch can
- *  repaint them without a refetch. */
-let statusData = null;
+/** Last /api/capabilities payload, kept so a language switch can repaint the
+ *  Power panel without a refetch. */
 let powerData = null;
 
 const setStatus = (text) => ($("stream-status").textContent = text || "");
@@ -1466,52 +1471,7 @@ async function loadSettings(announce) {
   fillSettings();
   renderCatalogInfo();
   settingsLoaded = true;
-  loadAndroidStatus().catch(() => {});
   if (announce) toast(t("ui.configReloaded"));
-}
-
-/** Same checks as `tca doctor`, rendered as a list in Settings. */
-async function loadAndroidStatus() {
-  const host = $("status-list");
-  host.textContent = "";
-  host.appendChild(el("p", "muted small", t("ui.checking")));
-  try {
-    statusData = await api("/api/status");
-  } catch (err) {
-    statusData = null;
-    host.textContent = "";
-    host.appendChild(el("p", "warn small", err.message));
-    return;
-  }
-  renderAndroidStatus(statusData);
-}
-
-/** Split out from the fetch so a language switch can repaint without refetching. */
-function renderAndroidStatus(res) {
-  const host = $("status-list");
-  host.textContent = "";
-  if (!res) return;
-  if (!res.termux) {
-    host.appendChild(el("p", "muted small", t("ui.notTermux")));
-  }
-  for (const c of res.checks) {
-    const row = el("div", "status-row");
-    const state = c.ok === null ? "neutral" : c.ok ? "ok" : "bad";
-    const dot = el("span", `status-dot ${state}`);
-    // Colour alone was the entire pass/fail signal, so a screen reader heard
-    // nothing but the label.
-    dot.setAttribute("role", "img");
-    dot.setAttribute(
-      "aria-label",
-      state === "ok" ? t("common.installed") : state === "bad" ? t("common.missing") : t("common.unknown"),
-    );
-    row.appendChild(dot);
-    const body = el("div", "status-body");
-    body.appendChild(el("p", "status-label", c.label));
-    if (c.ok === false && c.fix) body.appendChild(el("p", "status-fix muted small", c.fix));
-    row.appendChild(body);
-    host.appendChild(row);
-  }
 }
 
 async function saveSettings() {
@@ -2059,70 +2019,421 @@ function renderPower(data) {
   host.textContent = "";
   if (!data) return;
 
+  host.appendChild(scoreCard(data.score));
+
+  // Privileges first when they are missing: it is the one gap that silently
+  // breaks long tasks, so it should not sit below a list of optional packages.
+  if (data.termux && data.privilege && !data.privilege.kind) host.appendChild(privilegeSection(data.privilege));
+
+  for (const group of data.groups) host.appendChild(capabilityGroup(group));
+
+  if (data.termux && data.privilege && data.privilege.kind) host.appendChild(privilegeSection(data.privilege));
+  if (!data.termux) host.appendChild(el("p", "muted small", t("ui.notTermux")));
+}
+
+function scoreCard(score) {
   const head = el("section", "power-score");
-  head.append(
-    el("p", "power-score-label", t("status.score")),
-    el("p", "power-score-value", `${data.score.percent}%`),
-  );
+  head.append(el("p", "power-score-label", t("status.score")), el("p", "power-score-value", `${score.percent}%`));
   const bar = el("div", "power-bar");
   bar.setAttribute("role", "img");
-  bar.setAttribute("aria-label", `${t("status.score")}: ${data.score.percent}%`);
+  bar.setAttribute("aria-label", `${t("status.score")}: ${score.percent}%`);
   const fill = el("span", "power-bar-fill");
-  fill.style.width = `${data.score.percent}%`;
+  fill.style.width = `${score.percent}%`;
   bar.appendChild(fill);
   head.appendChild(bar);
-  host.appendChild(head);
+  return head;
+}
 
-  for (const group of data.groups) {
-    const missing = group.items.filter((i) => i.ok === false);
-    const fine = group.items.filter((i) => i.ok !== false);
+function capabilityGroup(group) {
+  const missing = group.items.filter((i) => i.ok === false);
+  const fine = group.items.filter((i) => i.ok !== false);
 
-    const section = el("section", "power-group");
-    section.append(el("h2", "power-group-title", group.title), el("p", "muted small", group.hint));
+  const section = el("section", "power-group");
+  section.append(el("h2", "power-group-title", group.title), el("p", "muted small", group.hint));
 
-    for (const item of missing) {
-      const card = el("article", "power-item bad");
-      card.append(el("p", "power-item-title", item.title), el("p", "power-item-why muted small", item.why));
-      const meta = [
-        item.packages.length ? t("common.package", { name: item.packages.join(" ") }) : "",
-        item.sizeMb ? t("common.size", { n: item.sizeMb }) : "",
-      ].filter(Boolean).join(" \u00b7 ");
-      if (meta) card.appendChild(el("p", "power-item-meta muted small", meta));
-      card.appendChild(el("p", "power-item-fix small", item.fix));
-      section.appendChild(card);
+  for (const item of missing) section.appendChild(capabilityCard(item));
+  if (!missing.length) section.appendChild(el("p", "power-ok-note small", t("power.allGood")));
+
+  // Everything already working folds into one line: the panel must show what
+  // needs doing, not a wall of green ticks.
+  if (fine.length) {
+    const done = el("details", "power-done");
+    const sum = el("summary");
+    sum.append(el("span", "power-done-count", `\u2713 ${fine.length}`), el("span", null, t("common.installed")));
+    done.appendChild(sum);
+    const list = el("ul", "power-done-list");
+    for (const item of fine) {
+      const li = document.createElement("li");
+      // ok === null means "cannot be judged here", which is not the same as
+      // working; say so rather than implying a tick.
+      const mark = item.ok === true ? "\u2713" : "\u2013";
+      const state = item.ok === true ? t("common.installed") : t("common.unknown");
+      li.className = item.ok === true ? "ok" : "unknown";
+      li.append(markGlyph(mark, state));
+      li.appendChild(document.createTextNode(item.detail ? `${item.title} \u2014 ${item.detail}` : item.title));
+      list.appendChild(li);
     }
+    done.appendChild(list);
+    section.appendChild(done);
+  }
+  return section;
+}
 
-    // Everything already working collapses to one line: the panel must show what
-    // needs doing, not a wall of green ticks.
-    if (fine.length) {
-      const done = el("details", "power-done");
-      const sum = el("summary");
-      sum.append(el("span", "power-done-count", `\u2713 ${fine.length}`), el("span", null, t("common.installed")));
-      done.appendChild(sum);
-      const list = el("ul", "power-done-list");
-      for (const item of fine) {
-        const li = document.createElement("li");
-        li.textContent = item.detail ? `${item.title} \u2014 ${item.detail}` : item.title;
-        list.appendChild(li);
+/** A glyph that carries its meaning as text for a screen reader, not as colour. */
+function markGlyph(glyph, label) {
+  const span = el("span", "mark", glyph);
+  span.setAttribute("role", "img");
+  span.setAttribute("aria-label", label);
+  return span;
+}
+
+/** One missing capability, with the install button when there is something to install. */
+function capabilityCard(item) {
+  const card = el("article", "power-item bad");
+  card.setAttribute("role", "group");
+  card.setAttribute("aria-label", `${item.title} \u2014 ${t("common.missing")}`);
+  card.append(el("p", "power-item-title", item.title), el("p", "power-item-why muted small", item.why));
+
+  const meta = [
+    item.packages.length ? t("common.package", { name: item.packages.join(" ") }) : "",
+    item.sizeMb ? t("common.size", { n: item.sizeMb }) : "",
+  ].filter(Boolean).join(" \u00b7 ");
+  if (meta) card.appendChild(el("p", "power-item-meta muted small", meta));
+
+  if (!item.installable) {
+    // `privilege` has its own section below; the rest are instructions.
+    if (item.id !== "privilege") card.appendChild(el("p", "power-item-fix small", item.fix));
+    return card;
+  }
+
+  const btn = el("button", "btn primary block", t("common.install"));
+  btn.type = "button";
+  const result = el("p", "power-item-result small");
+  result.setAttribute("role", "status");
+  result.hidden = true;
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = t("common.installing");
+    result.hidden = true;
+    try {
+      const res = await api("/api/capabilities/install", { method: "POST", body: { id: item.id } });
+      result.textContent = res.ok ? t("power.installed", { title: item.title }) : t("power.installFailed");
+      result.className = `power-item-result small ${res.ok ? "ok" : "warn"}`;
+      result.hidden = false;
+      if (res.output) result.appendChild(installLog(res.output));
+      if (res.ok) {
+        toast(t("power.installed", { title: item.title }));
+        await loadPower(); // the card disappears, which is the confirmation
+        return;
       }
-      done.appendChild(list);
-      section.appendChild(done);
+    } catch (err) {
+      result.textContent = err.message;
+      result.className = "power-item-result small warn";
+      result.hidden = false;
     }
-    host.appendChild(section);
+    btn.disabled = false;
+    btn.textContent = t("common.install");
+  });
+
+  card.append(btn, result);
+  return card;
+}
+
+/** apt output, folded away: useful when it fails, noise when it works. */
+function installLog(text) {
+  const box = el("details", "power-log");
+  box.appendChild(el("summary", null, t("power.installLog")));
+  box.appendChild(pre(text));
+  return box;
+}
+
+/* ------------------------------------------------- the privilege sub-wizard */
+
+/** Which sub-view of the privilege section is open: null = the method list. */
+let privView = null;
+
+function privilegeSection(priv) {
+  const section = el("section", "power-group power-priv");
+  section.append(el("h2", "power-group-title", t("power.privSection")));
+
+  const state = el("article", `power-item ${priv.kind ? "good" : "bad"}`);
+  state.append(el("p", "power-item-title", priv.label), el("p", "power-item-why muted small", priv.detail));
+  if (priv.phantomLabel) state.appendChild(el("p", "power-item-meta muted small", priv.phantomLabel));
+  section.appendChild(state);
+
+  if (privView) {
+    section.appendChild(privSubView(privView, priv));
+    return section;
   }
 
-  if (data.termux && data.privilege) {
-    const priv = el("section", "power-group");
-    priv.append(
-      el("h2", "power-group-title", t("cap.privilege.title")),
-      el("p", "power-item-title", data.privilege.label),
-      el("p", "muted small", data.privilege.detail),
-      el("p", "muted small", data.privilege.phantomLabel),
+  // Already working: offer a recheck and nothing else. Re-applying is cheap and
+  // is what a user coming back after a reboot actually needs.
+  if (priv.kind) {
+    section.appendChild(privAction(t("common.recheck"), "btn block", () => privRecheck()));
+    if (priv.kind === "adb") section.appendChild(el("p", "muted small", t("power.rebootWarn")));
+    return section;
+  }
+
+  section.appendChild(el("p", "small", t("power.chooseMethod")));
+  const list = el("div", "priv-methods");
+  for (const m of [
+    { id: "recheck", title: t("priv.method.recheck.title"), desc: t("priv.method.recheck.desc") },
+    { id: "pair", title: t("priv.method.pair.title"), desc: t("priv.method.pair.desc") },
+    { id: "shizuku", title: t("priv.method.shizuku.title"), desc: t("priv.method.shizuku.desc") },
+    { id: "root", title: t("priv.method.root.title"), desc: t("priv.method.root.desc") },
+  ]) {
+    const card = el("button", "priv-method");
+    card.type = "button";
+    card.append(el("span", "priv-method-title", m.title), el("span", "priv-method-desc", m.desc));
+    card.addEventListener("click", () => {
+      if (m.id === "recheck") return privRecheck();
+      privView = { name: m.id, step: 1 };
+      renderPower(powerData);
+    });
+    list.appendChild(card);
+  }
+  section.appendChild(list);
+  return section;
+}
+
+function privAction(label, cls, onClick) {
+  const btn = el("button", cls, label);
+  btn.type = "button";
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      await onClick();
+    } catch (err) {
+      fail(err);
+    }
+    btn.disabled = false;
+  });
+  return btn;
+}
+
+function privBack() {
+  const btn = el("button", "btn link priv-back", t("power.back"));
+  btn.type = "button";
+  btn.addEventListener("click", () => {
+    privView = null;
+    renderPower(powerData);
+  });
+  return btn;
+}
+
+/** Report which unlocks landed, per entry, so a vendor that blocks appops is visible. */
+function privApplied(applied, ok) {
+  const box = el("div", "priv-applied");
+  const okCount = applied.filter((a) => a.ok).length;
+  box.appendChild(el("p", `small ${ok ? "ok" : "warn"}`, t("power.applied", { ok: okCount, total: applied.length })));
+  const list = el("ul", "priv-applied-list");
+  for (const a of applied) {
+    const li = document.createElement("li");
+    li.className = a.ok ? "ok" : "warn";
+    li.textContent = `${a.ok ? "\u2713" : "\u2717"} ${t(a.labelKey)}`;
+    list.appendChild(li);
+  }
+  box.append(list, el("p", "muted small", ok ? t("power.appliedAll") : t("power.appliedSome")));
+  return box;
+}
+
+async function privRecheck() {
+  const res = await api("/api/privilege/recheck", { method: "POST" });
+  privView = res.kind ? null : privView;
+  await loadPower();
+  if (res.applied && res.applied.length) {
+    $("power-body").appendChild(privApplied(res.applied, res.appliedOk));
+  }
+  if (!res.kind) toast(t("priv.err.no_backend"), "warn");
+}
+
+function privSubView(view, priv) {
+  const box = el("div", "priv-flow");
+  box.appendChild(privBack());
+  if (view.name === "root") return rootFlow(box, priv);
+  if (view.name === "shizuku") return shizukuFlow(box, priv);
+  return pairFlow(box, priv);
+}
+
+function rootFlow(box, priv) {
+  box.append(
+    el("h3", "priv-flow-title", t("priv.method.root.title")),
+    el("p", "muted small", t("priv.method.root.desc")),
+  );
+  if (priv.root && priv.root.note) box.appendChild(el("p", "muted small mono", priv.root.note));
+  box.appendChild(
+    privAction(t("priv.root.check"), "btn primary block", async () => {
+      const res = await api("/api/privilege/recheck", { method: "POST" });
+      if (res.kind) {
+        privView = null;
+        await loadPower();
+        $("power-body").appendChild(privApplied(res.applied, res.appliedOk));
+      } else {
+        toast(t("priv.err.no_root"), "warn");
+        await loadPower();
+      }
+    }),
+  );
+  return box;
+}
+
+function shizukuFlow(box, priv) {
+  box.append(
+    el("h3", "priv-flow-title", t("priv.method.shizuku.title")),
+    el("p", "muted small", t("priv.method.shizuku.desc")),
+  );
+  const steps = el("ol", "priv-steps");
+  for (const key of ["priv.shizuku.s1", "priv.shizuku.s2", "priv.shizuku.s3", "priv.shizuku.s4"]) {
+    const li = document.createElement("li");
+    li.textContent = t(key);
+    steps.appendChild(li);
+  }
+  box.appendChild(steps);
+
+  const files = (priv.rish && priv.rish.files) || { script: false, dex: false };
+  box.appendChild(
+    el("p", "muted small mono", `rish: ${files.script ? "\u2713" : "\u2717"}  rish_shizuku.dex: ${files.dex ? "\u2713" : "\u2717"}`),
+  );
+
+  box.appendChild(
+    privAction(t("priv.shizuku.copy"), "btn block", async () => {
+      try {
+        await api("/api/privilege/copy-rish", { method: "POST" });
+        toast(t("priv.shizuku.copied"));
+      } catch (err) {
+        // The server answers with a translation key, which is the useful message.
+        toast(err.errKey ? t(err.errKey) : err.message, "warn");
+      }
+      await loadPower();
+    }),
+  );
+  box.appendChild(
+    privAction(t("priv.shizuku.check"), "btn primary block", async () => {
+      const res = await api("/api/privilege/recheck", { method: "POST" });
+      if (res.kind) {
+        privView = null;
+        await loadPower();
+        $("power-body").appendChild(privApplied(res.applied, res.appliedOk));
+      } else {
+        toast(t(files.script && files.dex ? "priv.err.rish_dead" : "priv.err.rish_missing"), "warn");
+        await loadPower();
+      }
+    }),
+  );
+  return box;
+}
+
+/**
+ * Wireless ADB pairing, three steps. This is the flow the web UI genuinely
+ * improves on the terminal: the address and the code can be pasted from the
+ * Android settings screen instead of typed digit by digit.
+ */
+function pairFlow(box, priv) {
+  const step = privView.step || 1;
+  box.append(
+    el("h3", "priv-flow-title", t("priv.method.pair.title")),
+    el("p", "priv-step-count muted small", t("power.step", { n: step, total: 3 })),
+  );
+
+  if (!priv.adb || !priv.adb.installed) {
+    box.append(
+      el("p", "small", t("priv.err.no_adb")),
+      privAction(t("priv.pair.installAdb"), "btn primary block", async () => {
+        await api("/api/privilege/install-adb", { method: "POST" });
+        await loadPower();
+      }),
     );
-    host.appendChild(priv);
+    return box;
   }
 
-  if (!data.termux) host.appendChild(el("p", "muted small", t("ui.notTermux")));
+  if (step === 1) {
+    box.append(el("h4", "priv-step-title", t("priv.pair.s1.title")), el("p", "small", t("priv.pair.s1.body")));
+    const next = el("button", "btn primary block", t("priv.pair.s1.done"));
+    next.type = "button";
+    next.addEventListener("click", () => {
+      privView = { name: "pair", step: 2 };
+      renderPower(powerData);
+    });
+    box.appendChild(next);
+    return box;
+  }
+
+  if (step === 2) {
+    box.append(el("h4", "priv-step-title", t("priv.pair.s2.title")), el("p", "small", t("priv.pair.s2.body")));
+    const addr = privField("priv-pair-addr", t("priv.pair.addrLabel"), "192.168.1.5:38721", "text");
+    const code = privField("priv-pair-code", t("priv.pair.codeLabel"), "123456", "text");
+    code.input.inputMode = "numeric";
+    code.input.maxLength = 6;
+    const out = el("p", "priv-flow-result small");
+    out.setAttribute("role", "status");
+    out.hidden = true;
+    box.append(addr.wrap, code.wrap);
+    box.appendChild(
+      privAction(t("priv.pair.doPair"), "btn primary block", async () => {
+        out.hidden = true;
+        try {
+          await api("/api/privilege/pair", {
+            method: "POST",
+            body: { address: addr.input.value, code: code.input.value },
+          });
+          toast(t("priv.pair.paired"));
+          privView = { name: "pair", step: 3 };
+          renderPower(powerData);
+        } catch (err) {
+          out.className = "priv-flow-result small warn";
+          out.textContent = err.errKey ? t(err.errKey) : err.message;
+          out.hidden = false;
+        }
+      }),
+    );
+    box.appendChild(out);
+    return box;
+  }
+
+  box.append(el("h4", "priv-step-title", t("priv.pair.s3.title")), el("p", "small", t("priv.pair.s3.body")));
+  const conn = privField("priv-pair-conn", t("priv.pair.connectLabel"), "192.168.1.5:41235", "text");
+  const out = el("p", "priv-flow-result small");
+  out.setAttribute("role", "status");
+  out.hidden = true;
+  box.appendChild(conn.wrap);
+  box.appendChild(
+    privAction(t("priv.pair.doConnect"), "btn primary block", async () => {
+      out.hidden = true;
+      try {
+        const res = await api("/api/privilege/connect", {
+          method: "POST",
+          body: { address: conn.input.value },
+        });
+        privView = null;
+        await loadPower();
+        if (res.applied) $("power-body").appendChild(privApplied(res.applied, res.appliedOk));
+      } catch (err) {
+        out.className = "priv-flow-result small warn";
+        out.textContent = err.errKey ? t(err.errKey) : err.message;
+        out.hidden = false;
+      }
+    }),
+  );
+  box.appendChild(out);
+  box.appendChild(el("p", "muted small", t("power.rebootWarn")));
+  return box;
+}
+
+/** A labelled input, built here so the flow markup stays in one place. */
+function privField(id, label, placeholder, type) {
+  const wrap = el("div", "priv-field");
+  const lab = el("label", null, label);
+  lab.setAttribute("for", id);
+  const input = document.createElement("input");
+  input.id = id;
+  input.type = type;
+  input.placeholder = placeholder;
+  input.autocapitalize = "off";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  wrap.append(lab, input);
+  return { wrap, input };
 }
 
 /* ------------------------------------------------------------- state / boot */
@@ -2222,7 +2533,6 @@ function wire() {
   $("btn-remove-provider").addEventListener("click", removeProvider);
   $("btn-save-model-id").addEventListener("click", saveCurrentModelId);
   $("btn-reload-config").addEventListener("click", () => loadSettings(true).catch(fail));
-  $("btn-recheck-status").addEventListener("click", () => loadAndroidStatus().catch(fail));
 
   // ---- language. Both tables are already loaded, so this is instant.
   $("cfg-lang").addEventListener("change", (e) => setLang(e.target.value));

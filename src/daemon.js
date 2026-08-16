@@ -25,6 +25,7 @@ import {
   adbConnect,
   adbPair,
   applyUnlocks,
+  copyRishFiles,
   detectBackend,
   hasBinary,
   installAdb,
@@ -222,6 +223,15 @@ export async function serve(opts = {}) {
       // they are lost on reboot, so re-apply as part of every recheck.
       const applied = backend.kind ? await applyUnlocks(backend.kind) : { kind: null, applied: [], ok: false };
       return json(res, 200, { ...backend, applied: applied.applied, appliedOk: applied.ok });
+    }
+
+    // Shizuku exports `rish` and `rish_shizuku.dex` into Download; this saves the
+    // user typing a cp command with a glob in it.
+    if (method === "POST" && pathname === "/api/privilege/copy-rish") {
+      const r = copyRishFiles();
+      if (!r.ok) return json(res, 400, r);
+      const backend = await detectBackend();
+      return json(res, 200, { ...r, kind: backend.kind, rish: backend.rish });
     }
 
     if (method === "POST" && pathname === "/api/privilege/install-adb") {

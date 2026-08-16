@@ -21,6 +21,9 @@ const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src")
 // The same table the daemon serves at /assets/i18n.json, handed to the app below
 // through a stubbed fetch, so the real loadI18n() path is what gets tested.
 const { DICT } = await import("../src/i18n.js");
+// Needed to know which keys the code builds at runtime rather than writing out.
+const { CAPABILITIES, TIERS } = await import("../src/capabilities.js");
+const { UNLOCKS } = await import("../src/privilege.js");
 
 /* ------------------------------------------------------------------ DOM stub */
 
@@ -487,3 +490,243 @@ test("the three tabs are declared once and switchTab is not hardcoded to two", (
     assert.ok(html.includes(`id="${m[1]}"`), `aria-controls="${m[1]}" has no target`);
   }
 });
+
+test("no translation is defined that nothing uses", () => {
+  // The other direction of rot: keys outlive the code that referenced them, the
+  // table grows, and nobody dares delete anything.
+  const sources = [
+    "web/app.js",
+    "web/index.html",
+    "capabilities.js",
+    "privilege.js",
+    "status.js",
+    "cli.js",
+    "daemon.js",
+  ]
+    .map((f) => fs.readFileSync(path.join(SRC, f), "utf8"))
+    .join("\n");
+
+  // Some keys are assembled at runtime - `cap.${id}.title`, `tier.${tier}`,
+  // `priv.${kind}.label` - so a plain text search cannot see them. Rebuild that
+  // set from the same tables the code uses, rather than loosening the check.
+  const computed = new Set();
+  for (const cap of CAPABILITIES) {
+    for (const part of ["title", "why", "fix"]) computed.add(`cap.${cap.id}.${part}`);
+  }
+  for (const tier of TIERS) computed.add(`tier.${tier}`), computed.add(`tier.${tier}.hint`);
+  for (const kind of ["root", "rish", "adb", "none"]) {
+    computed.add(`priv.${kind}.label`);
+    computed.add(`priv.${kind}.detail`);
+  }
+  for (const u of UNLOCKS) computed.add(u.labelKey);
+
+  const unused = Object.keys(DICT.vi)
+    .filter((k) => !computed.has(k) && !sources.includes(k))
+    .sort();
+  assert.deepEqual(unused, [], `nothing references: ${unused.join(", ")}`);
+});
+
+test("the dead Android-status markup and CSS are gone with it", () => {
+  // The flat doctor list moved into the Power panel, which shows the same checks
+  // grouped by benefit. Leaving the old fieldset behind would mean two places
+  // rendering the same data.
+  const html = fs.readFileSync(path.join(SRC, "web", "index.html"), "utf8");
+  const js = fs.readFileSync(path.join(SRC, "web", "app.js"), "utf8");
+  const css = fs.readFileSync(path.join(SRC, "web", "style.css"), "utf8");
+  for (const dead of ["status-list", "btn-recheck-status", "loadAndroidStatus", "renderAndroidStatus"]) {
+    assert.ok(!html.includes(dead), `index.html still has ${dead}`);
+    assert.ok(!js.includes(dead), `app.js still has ${dead}`);
+  }
+  for (const rule of [".status-row", ".status-dot", ".status-label", ".status-fix"]) {
+    assert.ok(!css.includes(rule), `style.css still has dead rule ${rule}`);
+  }
+});
+
+test("every class the Power panel builds has a rule in the stylesheet", () => {
+  // These elements are created in JS, so a typo is invisible: the element renders
+  // unstyled and looks merely ugly rather than broken.
+  const css = fs.readFileSync(path.join(SRC, "web", "style.css"), "utf8");
+  const classes = [
+    "power-score", "power-score-label", "power-score-value", "power-bar", "power-bar-fill",
+    "power-group", "power-group-title", "power-item", "power-item-title", "power-item-why",
+    "power-item-meta", "power-item-fix", "power-item-result", "power-ok-note", "power-log",
+    "power-done", "power-done-count", "power-done-list",
+    "priv-methods", "priv-method", "priv-method-title", "priv-method-desc",
+    "priv-flow", "priv-flow-title", "priv-flow-result", "priv-back", "priv-steps",
+    "priv-step-count", "priv-step-title", "priv-field", "priv-applied", "priv-applied-list",
+  ];
+  const missing = classes.filter((c) => !css.includes(`.${c}`));
+  assert.deepEqual(missing, [], `style.css has no rule for: ${missing.join(", ")}`);
+});
+
+/* -------------------------------------------------------------- power panel */
+
+/** A capabilities payload shaped like the real one, with one gap per tier. */
+function powerPayload({ termux = true, privKind = null } = {}) {
+  const item = (id, ok, extra = {}) => ({
+    id,
+    tier: extra.tier || "recommended",
+    weight: 2,
+    ok,
+    detail: extra.detail || "",
+    params: {},
+    packages: extra.packages || [],
+    sizeMb: extra.sizeMb ?? null,
+    installable: Boolean(extra.packages && extra.packages.length && termux),
+    titleKey: `cap.${id}.title`,
+    whyKey: `cap.${id}.why`,
+    fixKey: `cap.${id}.fix`,
+    title: `title-${id}`,
+    why: `why-${id}`,
+    fix: `fix-${id}`,
+  });
+
+  return {
+    lang: "en",
+    termux,
+    score: { have: 6, total: 10, percent: 60 },
+    privilege: {
+      kind: privKind,
+      labelKey: `priv.${privKind ?? "none"}.label`,
+      detailKey: `priv.${privKind ?? "none"}.detail`,
+      label: `label-${privKind ?? "none"}`,
+      detail: `detail-${privKind ?? "none"}`,
+      note: "",
+      root: { available: false, note: "su not on PATH" },
+      rish: { available: false, note: "missing: rish", files: { script: false, dex: false } },
+      adb: { installed: true, connected: false, note: "" },
+      phantomLimit: null,
+      phantomLabel: "phantom-unknown",
+    },
+    envKeys: { names: [], label: "no keys" },
+    groups: [
+      {
+        tier: "required",
+        titleKey: "tier.required",
+        hintKey: "tier.required.hint",
+        title: "Required",
+        hint: "hint-required",
+        items: [item("node", true, { tier: "required", detail: "v22" }), item("provider", false, { tier: "required" })],
+      },
+      {
+        tier: "recommended",
+        titleKey: "tier.recommended",
+        hintKey: "tier.recommended.hint",
+        title: "Recommended",
+        hint: "hint-recommended",
+        items: [
+          item("fast_search", false, { packages: ["ripgrep"], sizeMb: 4 }),
+          item("git", true),
+          item("storage", null),
+        ],
+      },
+    ],
+  };
+}
+
+test("the Power panel shows the score, the gaps, and folds away what works", () => {
+  app.renderPower(powerPayload({ termux: true }));
+  const root = shapeOf("power-body");
+
+  // Score card first: the one number that says whether you are done.
+  assert.equal(root.children[0].class, "power-score");
+  assert.match(textOf(root.children[0]), /60%/);
+
+  const tags = tags2(root);
+  assert.ok(tags.includes("article"), "a missing capability should render a card");
+  assert.ok(tags.includes("details"), "the working ones should be folded into a details");
+
+  // The fold must be summarised, not expanded: two working items in the tiers.
+  const done = collect(root, (n) => n.class === "power-done");
+  assert.ok(done.length >= 1);
+  assert.match(textOf(done[0]), /\u2713/);
+});
+
+test("an installable gap gets a button; one with its own flow does not", () => {
+  app.renderPower(powerPayload({ termux: true }));
+  const root = shapeOf("power-body");
+  const cards = collect(root, (n) => n.class === "power-item bad");
+
+  const withPkg = cards.find((c) => textOf(c).includes("title-fast_search"));
+  assert.ok(withPkg, "the ripgrep gap should be on screen");
+  assert.ok(collect(withPkg, (n) => n.tag === "button").length === 1, "it needs one install button");
+  assert.match(textOf(withPkg), /ripgrep/, "the package and size belong on the card");
+  assert.match(textOf(withPkg), /4 MB/);
+
+  // `provider` has no package: it must show the instruction, not a dead button.
+  const noPkg = cards.find((c) => textOf(c).includes("title-provider"));
+  assert.ok(noPkg);
+  assert.equal(collect(noPkg, (n) => n.tag === "button").length, 0);
+  assert.match(textOf(noPkg), /fix-provider/);
+});
+
+test("with no privileged backend the panel offers all four routes, above the packages", () => {
+  app.renderPower(powerPayload({ termux: true, privKind: null }));
+  const root = shapeOf("power-body");
+
+  const methods = collect(root, (n) => n.class === "priv-method");
+  assert.equal(methods.length, 4, "recheck, pairing, Shizuku and root");
+  const labels = methods.map(textOf).join(" | ");
+  for (const key of [
+    "priv.method.recheck.title",
+    "priv.method.pair.title",
+    "priv.method.shizuku.title",
+    "priv.method.root.title",
+  ]) {
+    assert.ok(labels.includes(DICT.en[key]), `the method list is missing ${key}`);
+  }
+
+  // It is the one gap that silently breaks long tasks, so it must not sit below
+  // a list of optional packages.
+  const order = collect(root, (n) => n.class === "power-group power-priv" || n.class === "power-group");
+  assert.equal(order[0].class, "power-group power-priv", "privileges come first when missing");
+});
+
+test("with a backend already working the panel collapses to a recheck", () => {
+  app.renderPower(powerPayload({ termux: true, privKind: "rish" }));
+  const root = shapeOf("power-body");
+  assert.equal(collect(root, (n) => n.class === "priv-method").length, 0, "no method list once it works");
+  const priv = collect(root, (n) => n.class === "power-group power-priv")[0];
+  assert.ok(priv, "the privilege section should still be present");
+  assert.match(textOf(priv), /label-rish/);
+  assert.match(textOf(priv), new RegExp(DICT.en["common.recheck"]));
+
+  // And it must be last: nothing to do there any more.
+  const groups = collect(root, (n) => n.class === "power-group" || n.class === "power-group power-priv");
+  assert.equal(groups[groups.length - 1].class, "power-group power-priv");
+});
+
+test("off Termux the panel says so and shows no privilege section", () => {
+  app.renderPower(powerPayload({ termux: false }));
+  const root = shapeOf("power-body");
+  assert.equal(collect(root, (n) => n.class === "power-group power-priv").length, 0);
+  assert.match(textOf(root), new RegExp(DICT.en["ui.notTermux"]));
+});
+
+/* ---------------------------------------------------- helpers for the above */
+
+function shapeOf(id) {
+  return shape(app.document.getElementById(id));
+}
+
+function tags2(node, acc = []) {
+  for (const c of node.children || []) {
+    if (c.tag) {
+      acc.push(c.tag);
+      tags2(c, acc);
+    }
+  }
+  return acc;
+}
+function collect(node, pred, acc = []) {
+  for (const c of node.children || []) {
+    if (c.tag && pred(c)) acc.push(c);
+    if (c.tag) collect(c, pred, acc);
+  }
+  return acc;
+}
+function textOf(node) {
+  if (!node) return "";
+  if (node.text) return node.text;
+  return (node.children || []).map(textOf).join(" ");
+}

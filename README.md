@@ -1,4 +1,4 @@
-﻿# tca
+# tca
 
 A coding agent with a web UI, built to run on a phone under [Termux](https://termux.dev).
 Zero runtime dependencies: `pkg install nodejs`, clone, run. No `npm install`, no
@@ -205,7 +205,14 @@ tca power
 ```
 
 The catalogue is `src/capabilities.js`. It is also the allowlist for the install
-endpoint: the browser sends a capability id, never a package name.
+endpoint: the browser sends a capability id, never a package name, and apt is
+invoked with an argv array under `--force-confold` (there is no terminal behind an
+HTTP request, so a dpkg conffile prompt would hang it forever).
+
+The Power tab drives the same functions as `tca adb-setup`, and the wireless
+pairing flow is genuinely better there than in the terminal: the address and the
+6-digit code can be pasted straight off the Android settings screen instead of
+typed digit by digit.
 
 ## Tools
 
@@ -244,14 +251,14 @@ src/web/             the UI: no framework, no build
 install.sh           the one-command install, non-interactive
 tools/gen-seed.mjs   regenerates the offline catalog
 test/agent.test.mjs        end-to-end against a fake provider
-test/capabilities.test.mjs capabilities, privileges, i18n key parity
+test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity
 test/markdown.test.mjs     the UI renderer, in a DOM stub
 ```
 
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 53 tests, no network or API key needed
+node --test test/*.test.mjs     # 69 tests, no network or API key needed
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```
 
