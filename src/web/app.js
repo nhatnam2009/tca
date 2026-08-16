@@ -680,6 +680,9 @@ const approvals = new Map();
  *  Power panel without a refetch. */
 let powerData = null;
 
+/** The plan card, replaced in place rather than appended on every update. */
+let todoCard = null;
+
 const setStatus = (text) => ($("stream-status").textContent = text || "");
 
 function setStreaming(on) {
@@ -873,6 +876,60 @@ function noteLine(text) {
   scrollToBottom();
 }
 
+/**
+ * The agent's checklist, as one card that updates in place.
+ *
+ * Deliberately not appended per update: the model rewrites the whole list every
+ * time it changes something, and a transcript with eight copies of a six-item
+ * plan in it is unreadable on a phone. So the card is found and replaced.
+ */
+function renderTodo(items) {
+  if (!Array.isArray(items) || !items.length) {
+    if (todoCard) todoCard.remove();
+    todoCard = null;
+    return;
+  }
+
+  const done = items.filter((i) => i.status === "done").length;
+  const card = el("section", "todo");
+  card.setAttribute("role", "group");
+  card.setAttribute("aria-label", t("todo.title"));
+
+  const head = el("div", "todo-head");
+  head.append(
+    el("p", "todo-title", t("todo.title")),
+    el("p", "todo-count", t("todo.progress", { done, total: items.length })),
+  );
+  card.appendChild(head);
+
+  const bar = el("div", "todo-bar");
+  bar.setAttribute("role", "img");
+  bar.setAttribute("aria-label", t("todo.progress", { done, total: items.length }));
+  const fill = el("span", "todo-bar-fill");
+  fill.style.width = `${items.length ? Math.round((done / items.length) * 100) : 0}%`;
+  bar.appendChild(fill);
+  card.appendChild(bar);
+
+  const list = el("ul", "todo-list");
+  for (const item of items) {
+    const status = ["pending", "in_progress", "done"].includes(item.status) ? item.status : "pending";
+    const li = document.createElement("li");
+    li.className = `todo-item ${status}`;
+    const glyph = status === "done" ? "\u2713" : status === "in_progress" ? "\u203a" : "\u25cb";
+    const mark = el("span", "todo-mark", glyph);
+    mark.setAttribute("role", "img");
+    mark.setAttribute("aria-label", t(`todo.status.${status}`));
+    li.append(mark, el("span", "todo-text", String(item.text || "")));
+    list.appendChild(li);
+  }
+  card.appendChild(list);
+
+  if (todoCard) todoCard.replaceWith(card);
+  else messageHost().appendChild(card);
+  todoCard = card;
+  scrollToBottom();
+}
+
 /** Render one stored message from GET /api/sessions/:id. */
 function renderStoredMessage(msg) {
   const role = msg.role === "user" ? "user" : "assistant";
@@ -966,6 +1023,9 @@ function handleEvent(ev) {
     case "tool_note":
       noteLine(ev.text || "");
       break;
+    case "todo":
+      renderTodo(ev.items || []);
+      break;
     case "title":
       // The first user message becomes the session title; reflect it right away
       // instead of waiting for the turn to end.
@@ -1024,6 +1084,7 @@ async function selectSession(id) {
   store.set(SESSION_KEY, id);
   fillSessionSelect();
   turn = null;
+  todoCard = null;
   dirtyBlocks.clear();
   approvals.clear();
   setStreaming(false);

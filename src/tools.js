@@ -12,10 +12,16 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { fdGlob, rgSearch } from "./fastsearch.js";
+import { writeTodos } from "./store.js";
 
 const MAX_OUTPUT = 60_000; // chars fed back to the model
 const MAX_FILE = 400_000;
 const DEFAULT_TIMEOUT = 120_000;
+// Collected before sorting, so the two grep implementations truncate the same
+// list rather than two different prefixes of it.
+const MAX_GREP_LINES = 5_000;
+const GLOB_LIMIT = 20_000;
 const IGNORE_DIRS = new Set([
   ".git",
   "node_modules",
@@ -54,6 +60,8 @@ export class ToolError extends Error {}
  * @property {boolean} autoApproveCommands
  * @property {boolean} [autoApproveEdits]           false = confirm every file write
  * @property {string[]} [denyCommands]              extra regex sources
+ * @property {string} [sessionId]                   needed by todo_write
+ * @property {(items: Array<{text: string, status: string}>) => void} [onTodo]
  * @property {(req: {command: string, cwd: string, reason: string, kind?: "command"|"edit"}) => Promise<boolean>} approve
  * @property {AbortSignal} [signal]
  */
@@ -307,9 +315,31 @@ export function changeSummary(before, after, maxLines = 40) {
   return out.join("\n");
 }
 
-// -------------------------------------------------------------------- the tools
+/**
+ * Shared tail of both grep implementations.
+ *
+ * Sorting before truncating is what makes the ripgrep path and the JavaScript
+ * path interchangeable: they visit files in different orders, so cutting to
+ * max_results first would hand back two different subsets of the same matches.
+ * @param {string[]} lines  "path:line: text"
+ * @param {string} pattern
+ * @param {number} maxResults
+ */
+function formatGrep(lines, pattern, maxResults) {
+  if (!lines.length) return `no matches for ${pattern}`;
+  const parsed = lines.map((raw) => {
+    const first = raw.indexOf(":");
+    const second = raw.indexOf(":", first + 1);
+    return { file: raw.slice(0, first), line: Number(raw.slice(first + 1, second)) || 0, raw };
+  });
+  parsed.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line));
+  const shown = parsed.slice(0, Math.max(1, maxResults));
+  const more = parsed.length - shown.length;
+  const body = shown.map((x) => x.raw).join("\n");
+  return clip(more > 0 ? `${body}\n[... ${more} more match(es); raise max_results ...]` : body);
+}
 
-/** @type {Record<string, {spec: import("./provider.js").ToolSpec, run: (args: any, ctx: ToolContext) => Promise<string>}>} */
+// -------------------------------------------------------------------- the tools/** @type {Record<string, {spec: import("./provider.js").ToolSpec, run: (args: any, ctx: ToolContext) => Promise<string>}>} */
 export const TOOLS = {
   read_file: {
     spec: {
@@ -450,17 +480,34 @@ export const TOOLS = {
     },
     async run({ pattern, path: p = "." }, ctx) {
       const root = resolveInside(ctx, p);
-      const re = globToRegExp(pattern);
-      /** @type {Array<{rel: string, mtime: number}>} */
-      const hits = [];
-      await walk(root, (rel) => {
-        if (re.test(rel)) {
-          const stat = fs.statSync(path.join(root, rel), { throwIfNoEntry: false });
-          hits.push({ rel, mtime: stat?.mtimeMs ?? 0 });
-        }
+
+      // fd when the device has it, the JavaScript walk when it does not. Both
+      // must produce the same file set; only the speed differs.
+      let rels = null;
+      const fast = await fdGlob({
+        root,
+        pattern,
+        limit: GLOB_LIMIT,
+        ignoreDirs: IGNORE_DIRS,
+        signal: ctx.signal,
       });
-      if (!hits.length) return `no files match ${pattern}`;
-      hits.sort((a, b) => b.mtime - a.mtime);
+      if (fast.ok) rels = fast.files;
+
+      if (rels === null) {
+        const re = globToRegExp(pattern);
+        rels = [];
+        await walk(root, (rel) => {
+          if (re.test(rel)) rels.push(rel);
+        });
+      }
+
+      if (!rels.length) return `no files match ${pattern}`;
+      // Newest first: what the agent wants is usually what changed last.
+      const hits = rels.map((rel) => {
+        const stat = fs.statSync(path.join(root, rel), { throwIfNoEntry: false });
+        return { rel, mtime: stat?.mtimeMs ?? 0 };
+      });
+      hits.sort((a, b) => b.mtime - a.mtime || (a.rel < b.rel ? -1 : 1));
       return clip(hits.slice(0, 500).map((h) => h.rel).join("\n"));
     },
   },
@@ -469,7 +516,7 @@ export const TOOLS = {
     spec: {
       name: "grep",
       description:
-        "Search file contents with a JavaScript regular expression. Returns path:line:text for each match.",
+        "Search file contents with a regular expression. Returns path:line:text for each match, sorted by path.",
       parameters: {
         type: "object",
         properties: {
@@ -483,6 +530,21 @@ export const TOOLS = {
     },
     async run({ pattern, include, path: p = ".", max_results = 200 }, ctx) {
       const root = resolveInside(ctx, p);
+      if (typeof pattern !== "string" || !pattern.length) throw new ToolError("pattern is required");
+
+      // ripgrep is many times faster on a phone, so prefer it - but only when it
+      // can be trusted to answer identically. See src/fastsearch.js.
+      const fast = await rgSearch({
+        root,
+        pattern,
+        include,
+        maxResults: MAX_GREP_LINES,
+        maxFileSize: MAX_FILE,
+        ignoreDirs: IGNORE_DIRS,
+        signal: ctx.signal,
+      });
+      if (fast.ok) return formatGrep(fast.lines, pattern, max_results);
+
       let re;
       try {
         re = new RegExp(pattern);
@@ -505,7 +567,7 @@ export const TOOLS = {
       /** @type {string[]} */
       const out = [];
       for (const rel of files) {
-        if (out.length >= max_results) break;
+        if (out.length >= MAX_GREP_LINES) break;
         const abs = path.join(root, rel);
         const stat = fs.statSync(abs, { throwIfNoEntry: false });
         if (!stat || stat.size > MAX_FILE) continue;
@@ -517,12 +579,11 @@ export const TOOLS = {
         }
         if (text.includes("\u0000")) continue; // binary
         const lines = text.split("\n");
-        for (let i = 0; i < lines.length && out.length < max_results; i++) {
+        for (let i = 0; i < lines.length && out.length < MAX_GREP_LINES; i++) {
           if (re.test(lines[i])) out.push(`${rel}:${i + 1}: ${lines[i].slice(0, 400)}`);
         }
       }
-      if (!out.length) return `no matches for ${pattern}`;
-      return clip(out.join("\n"));
+      return formatGrep(out, pattern, max_results);
     },
   },
 
@@ -672,8 +733,66 @@ export const TOOLS = {
     },
   },
 
-  read_url: {
+  todo_write: {
     spec: {
+      name: "todo_write",
+      description:
+        "Record or update your plan for the current task as a checklist. Pass the WHOLE list every time, not just the changed item. Use it for anything that takes more than a couple of steps: write the plan first, then mark each item in_progress before you start it and done the moment it is finished. Exactly one item should be in_progress at a time.",
+      parameters: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            description: "The complete checklist, in order.",
+            items: {
+              type: "object",
+              properties: {
+                text: { type: "string", description: "Short, specific, actionable." },
+                status: { type: "string", enum: ["pending", "in_progress", "done"] },
+              },
+              required: ["text", "status"],
+            },
+          },
+        },
+        required: ["items"],
+      },
+    },
+    async run({ items }, ctx) {
+      if (!ctx.sessionId) throw new ToolError("todo_write is not available here");
+      if (!Array.isArray(items)) throw new ToolError("items must be an array");
+      if (items.length > 60) throw new ToolError("that is too many items; keep the plan to the current task");
+
+      const STATUSES = new Set(["pending", "in_progress", "done"]);
+      const clean = items.map((raw, i) => {
+        const text = String(raw?.text ?? "").replace(/\s+/g, " ").trim();
+        if (!text) throw new ToolError(`item ${i + 1} has no text`);
+        const status = String(raw?.status ?? "pending");
+        if (!STATUSES.has(status)) {
+          throw new ToolError(`item ${i + 1} has status "${status}"; use pending, in_progress or done`);
+        }
+        return { text: text.slice(0, 200), status: /** @type {any} */ (status) };
+      });
+
+      // More than one in_progress is the failure mode that makes a plan useless:
+      // it stops meaning "what I am doing now".
+      const running = clean.filter((c) => c.status === "in_progress");
+      if (running.length > 1) {
+        throw new ToolError(
+          `${running.length} items are in_progress; exactly one should be, so the list still says what you are doing now`,
+        );
+      }
+
+      writeTodos(ctx.sessionId, clean);
+      if (ctx.onTodo) ctx.onTodo(clean);
+
+      const done = clean.filter((c) => c.status === "done").length;
+      const glyph = { done: "x", in_progress: ">", pending: " " };
+      const body = clean.map((c) => `[${glyph[c.status]}] ${c.text}`).join("\n");
+      return `Plan (${done}/${clean.length} done):\n${body}`;
+    },
+  },
+
+  read_url: {    spec: {
       name: "read_url",
       description: "Fetch the text content of a URL (documentation, README, API reference). Returns plain text, HTML stripped.",
       parameters: {

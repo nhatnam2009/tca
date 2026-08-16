@@ -518,6 +518,7 @@ test("no translation is defined that nothing uses", () => {
     computed.add(`priv.${kind}.label`);
     computed.add(`priv.${kind}.detail`);
   }
+  for (const status of ["pending", "in_progress", "done"]) computed.add(`todo.status.${status}`);
   for (const u of UNLOCKS) computed.add(u.labelKey);
 
   const unused = Object.keys(DICT.vi)
@@ -554,6 +555,8 @@ test("every class the Power panel builds has a rule in the stylesheet", () => {
     "priv-methods", "priv-method", "priv-method-title", "priv-method-desc",
     "priv-flow", "priv-flow-title", "priv-flow-result", "priv-back", "priv-steps",
     "priv-step-count", "priv-step-title", "priv-field", "priv-applied", "priv-applied-list",
+    "todo", "todo-head", "todo-title", "todo-count", "todo-bar", "todo-bar-fill",
+    "todo-list", "todo-item", "todo-mark", "todo-text",
   ];
   const missing = classes.filter((c) => !css.includes(`.${c}`));
   assert.deepEqual(missing, [], `style.css has no rule for: ${missing.join(", ")}`);

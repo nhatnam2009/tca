@@ -1229,6 +1229,87 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
   color: var(--warn);
 }
 
+/* --------------------------------------------------------------- the plan */
+
+/* The agent's checklist. One card, replaced in place: the model rewrites the
+   whole list on every change, and eight copies of it in the transcript would be
+   unreadable on a phone. */
+
+.todo {
+  margin: 8px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.todo-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.todo-title {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.todo-count {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.todo-bar {
+  height: 4px;
+  margin: 8px 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.todo-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.todo-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.todo-item {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  font-size: 0.87rem;
+  line-height: 1.45;
+}
+.todo-mark {
+  flex: 0 0 auto;
+  width: 1.1em;
+  color: var(--muted);
+}
+.todo-item.done .todo-mark { color: var(--ok); }
+.todo-item.in_progress .todo-mark { color: var(--accent); }
+.todo-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.todo-item.done .todo-text {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.todo-item.in_progress .todo-text {
+  font-weight: 600;
+}
+
 /* ------------------------------------------------------------- power panel */
 
 /* Device capability. The rule the layout follows: show what needs doing, and

@@ -7,13 +7,39 @@
 
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { stream, ProviderError } from "./provider.js";
 import { callTool, toolSpecs, pickShell } from "./tools.js";
-import { appendMessage, getSession, maybeSetTitle } from "./store.js";
+import { appendMessage, getSession, maybeSetTitle, readTodos } from "./store.js";
 import { modelsFor } from "./catalog.js";
+import { clearNotification, notify, vibrate } from "./notify.js";
 
 const APPROVAL_TIMEOUT = 10 * 60_000;
 const FALLBACK_CONTEXT_WINDOW = 128_000; // used only when the catalog has no entry for this model
+/** Project conventions, read fresh every turn so editing the file takes effect. */
+const AGENTS_FILE = "AGENTS.md";
+const AGENTS_MAX = 8_000;
+
+/**
+ * Project-specific instructions, if the workspace has an AGENTS.md.
+ *
+ * This is the cheapest way for the agent to learn "this project uses tabs", "run
+ * pnpm not npm", "never touch generated/". Read on every turn rather than cached,
+ * so the user can edit the file and see the effect on the next message.
+ * @param {string} workspace
+ */
+function projectInstructions(workspace) {
+  try {
+    const file = path.join(workspace, AGENTS_FILE);
+    const stat = fs.statSync(file, { throwIfNoEntry: false });
+    if (!stat || !stat.isFile()) return "";
+    const text = fs.readFileSync(file, "utf8").trim();
+    if (!text) return "";
+    return text.length > AGENTS_MAX ? `${text.slice(0, AGENTS_MAX)}\n[... truncated ...]` : text;
+  } catch {
+    return "";
+  }
+}
 
 /**
  * The real context window (total tokens a model can see), looked up from the
@@ -33,9 +59,13 @@ function contextWindowFor(config, provider) {
  * @param {import("./config.js").Config} config
  * @param {string} workspace
  */
-function systemPrompt(config, workspace) {
+function systemPrompt(config, workspace, todos = []) {
   const shell = pickShell().shell;
   const termux = Boolean(process.env.TERMUX_VERSION);
+  const projectNotes = projectInstructions(workspace);
+  const openPlan = todos.length && todos.some((x) => x.status !== "done")
+    ? todos.map((x) => `[${x.status === "done" ? "x" : x.status === "in_progress" ? ">" : " "}] ${x.text}`).join("\n")
+    : "";
   return [
     "You are a coding agent operating directly on the user's machine through tools.",
     "",
@@ -61,6 +91,8 @@ function systemPrompt(config, workspace) {
     "- Reference code as path:line so the user can jump to it.",
     "- Say plainly when something did not work or you could not verify it.",
     config.instructions ? `\nUser instructions:\n${config.instructions}` : "",
+    projectNotes ? `\nProject instructions (from ${AGENTS_FILE} in the workspace, these take precedence):\n${projectNotes}` : "",
+    openPlan ? `\nYour plan for this task so far (keep it current with todo_write):\n${openPlan}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -119,6 +151,17 @@ export class Runner {
     this.controller.abort();
   }
 
+  /**
+   * The system prompt for this turn.
+   *
+   * A method rather than a bare call so it can be inspected on its own: the parts
+   * that come from outside the code - AGENTS.md in the workspace, the saved plan -
+   * are exactly the parts worth having a test for.
+   */
+  buildSystemPrompt() {
+    return systemPrompt(this.config, this.config.workspace, readTodos(this.sessionId));
+  }
+
   /** @param {string} id @param {boolean} approved */
   resolveApproval(id, approved) {
     const resolve = this.pending.get(id);
@@ -128,20 +171,57 @@ export class Runner {
     return true;
   }
 
+  /**
+   * Replace the ongoing notification with the result.
+   *
+   * A finished turn is the thing you actually want to be told about on a phone,
+   * because you have almost certainly switched away from the browser. It does not
+   * vibrate: only a blocked approval does, since something that buzzes on every
+   * completion is something you turn off within a day.
+   * @param {{kind: "done"|"aborted"|"error"|"exhausted", detail: string}} outcome
+   * @param {string} lastText
+   */
+  notifyOutcome(outcome, lastText) {
+    const body = (outcome.detail || lastText || "").replace(/\s+/g, " ").trim().slice(0, 220);
+    if (outcome.kind === "aborted") {
+      clearNotification().catch(() => {});
+      return;
+    }
+    const title =
+      outcome.kind === "done"
+        ? "Agent finished"
+        : outcome.kind === "exhausted"
+          ? `Agent stopped after ${outcome.detail} steps`
+          : "Agent failed";
+    notify({ title, body, priority: outcome.kind === "done" ? "default" : "high" }).catch(() => {});
+  }
+
   /** Ask the UI, block this tool call until an answer arrives. */
   approve = ({ command, cwd, reason, kind = "command" }) => {
     const id = `ap_${++this.seq}`;
     this.emit({ type: "approval_request", id, kind, command, cwd, reason });
+    // The turn is now stopped until the user answers, and on a phone they are
+    // probably in another app. A notification is the only thing that tells them.
+    notify({
+      title: kind === "edit" ? "Agent needs approval: file change" : "Agent needs approval: command",
+      body: String(command || "").slice(0, 200),
+      priority: "high",
+      ongoing: true,
+    }).catch(() => {});
+    vibrate().catch(() => {});
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(id)) {
           this.emit({ type: "approval_closed", id, outcome: "timeout" });
           this.emit({ type: "tool_note", text: "Approval timed out after 10 minutes; nothing was run or changed." });
+          notify({ title: "Approval timed out", body: "Nothing was run or changed.", priority: "low" }).catch(() => {});
           resolve(false);
         }
       }, APPROVAL_TIMEOUT);
       this.pending.set(id, (ok) => {
         clearTimeout(timer);
+        // Back to work: replace the "needs you" notification with the working one.
+        notify({ title: "Agent working\u2026", priority: "low", ongoing: true }).catch(() => {});
         resolve(ok);
       });
     });
@@ -168,21 +248,37 @@ export class Runner {
       denyCommands: this.config.denyCommands,
       approve: this.approve,
       signal: this.controller.signal,
+      sessionId: this.sessionId,
+      // Straight to the UI: a plan the user cannot see is only half useful.
+      onTodo: (items) => this.emit({ type: "todo", items }),
     };
 
     await appendMessage(this.sessionId, { role: "user", content: text });
     const title = await maybeSetTitle(this.sessionId, text);
     this.emit({ type: "title", title });
 
-    const system = systemPrompt(this.config, workspace);
+    // The plan survives compaction this way. The tool result that created it can
+    // be summarised away halfway through a long task, and losing the checklist is
+    // exactly when the agent starts repeating itself.
+    const system = this.buildSystemPrompt();
     const specs = toolSpecs();
     const maxSteps = this.config.maxSteps || 40;
+
+    // One ongoing notification for the whole turn, replaced at the end by the
+    // result. Without it there is nothing on a phone to say the agent is busy.
+    notify({ title: "Agent working\u2026", body: text.slice(0, 120), priority: "low", ongoing: true }).catch(() => {});
+    /** @type {{kind: "done"|"aborted"|"error"|"exhausted", detail: string}} */
+    let outcome = { kind: "error", detail: "" };
+    /** Last thing the model said, which is the useful notification body. */
+    let lastText = "";
 
     try {
       for (let step = 0; step < maxSteps; step++) {
         const history = compactHistory(getSession(this.sessionId).messages);
 
         let assistantText = "";
+        // Kept outside the loop too: on an error the last thing said is the
+        // most useful thing to put in the notification.
         /** @type {Array<{id: string, name: string, input: any}>} */
         const toolCalls = [];
         let usage = { input: 0, output: 0 };
@@ -197,6 +293,7 @@ export class Runner {
         })) {
           if (ev.type === "text") {
             assistantText += ev.text;
+            lastText = assistantText;
             this.emit({ type: "text_delta", text: ev.text });
           } else if (ev.type === "tool_call") {
             toolCalls.push({ id: ev.id, name: ev.name, input: ev.input });
@@ -224,6 +321,7 @@ export class Runner {
         });
 
         if (!toolCalls.length) {
+          outcome = { kind: "done", detail: assistantText.trim() };
           this.emit({ type: "done", stopReason });
           return;
         }
@@ -285,11 +383,13 @@ export class Runner {
         await appendMessage(this.sessionId, { role: "tool", results });
 
         if (this.controller.signal.aborted) {
+          outcome = { kind: "aborted", detail: "" };
           this.emit({ type: "done", stopReason: "aborted" });
           return;
         }
       }
 
+      outcome = { kind: "exhausted", detail: String(maxSteps) };
       this.emit({
         type: "error",
         message: `Stopped after ${maxSteps} steps without finishing. Raise maxSteps in Settings or split the task.`,
@@ -297,15 +397,18 @@ export class Runner {
     } catch (err) {
       const e = /** @type {Error} */ (err);
       if (this.controller.signal.aborted || e.name === "AbortError") {
+        outcome = { kind: "aborted", detail: "" };
         this.emit({ type: "done", stopReason: "aborted" });
         return;
       }
-      this.emit({
-        type: "error",
-        message: e instanceof ProviderError ? e.message : `${e.name}: ${e.message}`,
-      });
+      const message = e instanceof ProviderError ? e.message : `${e.name}: ${e.message}`;
+      outcome = { kind: "error", detail: message };
+      this.emit({ type: "error", message });
     } finally {
       this.running = false;
+      // Every exit path lands here, so the notification cannot be left saying
+      // "working" after a turn that crashed or was stopped.
+      this.notifyOutcome(outcome, lastText);
     }
   }
 }

@@ -336,6 +336,13 @@ export const DICT = {
     "ui.getApiKey": "Lấy API key",
     "ui.manualBaseUrl": "cần nhập base URL thủ công",
 
+    // ---------------------------------------------------------- k\u1ebf ho\u1ea1ch
+    "todo.title": "Kế hoạch",
+    "todo.progress": "{done}/{total} xong",
+    "todo.status.pending": "chưa làm",
+    "todo.status.in_progress": "đang làm",
+    "todo.status.done": "đã xong",
+
     // ------------------------------------------------------------ tab Power
     "power.allGood": "Mọi thứ ở tầng này đã sẵn sàng.",
     "power.installed": "Đã cài xong: {title}",
@@ -696,6 +703,13 @@ export const DICT = {
     "ui.notTermux": "Not running under Termux — Android-only checks are skipped.",
     "ui.getApiKey": "Get an API key",
     "ui.manualBaseUrl": "needs a manual base URL",
+
+    // -------------------------------------------------------------- the plan
+    "todo.title": "Plan",
+    "todo.progress": "{done} of {total} done",
+    "todo.status.pending": "to do",
+    "todo.status.in_progress": "in progress",
+    "todo.status.done": "done",
 
     // ------------------------------------------------------------ Power tab
     "power.allGood": "Everything in this tier is ready.",

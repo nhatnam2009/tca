@@ -17,6 +17,7 @@ import crypto from "node:crypto";
 import { STATE_DIR } from "./config.js";
 
 const DIR = path.join(STATE_DIR, "sessions");
+const TODO_DIR = path.join(STATE_DIR, "todos");
 
 /**
  * @typedef {object} ToolCallRecord
@@ -127,4 +128,48 @@ export async function maybeSetTitle(id, text) {
 export function deleteSession(id) {
   ensure();
   fs.rmSync(file(id), { force: true });
+  fs.rmSync(todoFile(id), { force: true });
+}
+
+// ------------------------------------------------------------------- the plan
+
+/**
+ * The agent's checklist for the current task.
+ *
+ * Kept here rather than in the workspace on purpose: it is scratch state about a
+ * conversation, not part of the user's project, and writing a todo.json into
+ * someone's repository would be rude and would show up in their git status.
+ *
+ * @typedef {{text: string, status: "pending"|"in_progress"|"done"}} TodoItem
+ */
+
+function todoFile(id) {
+  return path.join(TODO_DIR, `${id}.json`);
+}
+
+/**
+ * @param {string} id
+ * @returns {TodoItem[]}
+ */
+export function readTodos(id) {
+  try {
+    const raw = fs.readFileSync(todoFile(id), "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Replace the whole list. The model rewrites it in full every time rather than
+ * patching individual entries, which removes any need for stable ids and any way
+ * for the stored list to drift out of step with what the model believes.
+ * @param {string} id
+ * @param {TodoItem[]} items
+ */
+export function writeTodos(id, items) {
+  fs.mkdirSync(TODO_DIR, { recursive: true });
+  fs.writeFileSync(todoFile(id), JSON.stringify(items));
+  return items;
 }

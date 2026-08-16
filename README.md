@@ -216,11 +216,11 @@ typed digit by digit.
 
 ## Tools
 
-Thirteen, all confined to the workspace:
+Fourteen, all confined to the workspace:
 
 ```
 read_file  batch_read  write_file  edit_file  patch_file  move_file  delete_file
-list_dir   tree        glob        grep       run_command read_url
+list_dir   tree        glob        grep       run_command read_url    todo_write
 ```
 
 `edit_file` replaces one exact string and refuses an ambiguous match.
@@ -228,6 +228,24 @@ list_dir   tree        glob        grep       run_command read_url
 scrambling the file. `write_file`, `edit_file` and `patch_file` return a diff of
 what they changed, coloured in the UI. Only `run_command` always asks for
 approval; file changes ask only when `autoApproveEdits` is off.
+
+`todo_write` is the agent's checklist for the current task. It is stored per
+session under `~/.tca/todos/`, never in your workspace, and is re-injected into
+the system prompt every turn so history compaction cannot lose the plan halfway
+through a long job. The UI renders it as one card that updates in place.
+
+`grep` and `glob` use ripgrep and fd when the device has them, and the JavaScript
+walk when it does not. The two paths must return identical answers, or the agent's
+behaviour would depend on which packages are installed, so `src/fastsearch.js`
+overrides the defaults that disagree with ours (ripgrep reads `.gitignore` and
+skips dotfiles; our walk does neither) and routes any pattern using lookaround or
+backreferences - which the Rust regex crate cannot express - to JavaScript
+instead. `TCA_NO_FASTSEARCH=1` forces the slow path, which is how the parity test
+compares them.
+
+If the workspace contains an `AGENTS.md`, it is read on every turn and appended to
+the system prompt. That is the cheapest way to teach the agent "this project uses
+pnpm" or "never touch generated/".
 
 ## Layout
 
@@ -239,7 +257,9 @@ src/catalog.js       models.dev catalog: offline seed + optional full download
 src/recommended.js   curated shortlist
 src/setup.js         env key detection, add provider, test connection
 src/provider.js      the two wire formats, SSE streaming, retries
-src/tools.js         13 tools + workspace confinement + denylist + diff engine
+src/tools.js         14 tools + workspace confinement + denylist + diff engine
+src/fastsearch.js    ripgrep/fd fast path, kept answer-for-answer with the walk
+src/notify.js        termux-notification, so a blocked turn is not invisible
 src/privilege.js     root / Shizuku / adb backends, and the Android unlocks
 src/capabilities.js  what the agent could do here, scored and tiered
 src/status.js        the `doctor` view of capabilities.js
@@ -252,13 +272,14 @@ install.sh           the one-command install, non-interactive
 tools/gen-seed.mjs   regenerates the offline catalog
 test/agent.test.mjs        end-to-end against a fake provider
 test/capabilities.test.mjs capabilities, privileges, rish, i18n key parity
-test/markdown.test.mjs     the UI renderer, in a DOM stub
+test/markdown.test.mjs     the UI renderer and the Power panel, in a DOM stub
+test/search.test.mjs       ripgrep/fd parity, the plan tool, AGENTS.md
 ```
 
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 69 tests, no network or API key needed
+node --test test/*.test.mjs     # 79 tests, no network or API key needed
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```
 
