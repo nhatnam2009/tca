@@ -22,6 +22,7 @@ import { Runner } from "./loop.js";
 import { getStatus } from "./status.js";
 import { getCapabilities } from "./capabilities.js";
 import { undoLastTurn, redoLastTurn } from "./undo.js";
+import { seedFromEnv } from "./setup.js";
 import {
   adbConnect,
   adbPair,

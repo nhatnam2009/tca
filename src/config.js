@@ -52,6 +52,9 @@ import os from "node:os";
  * @property {string[]} [denyCommands]              extra regexes, always blocked
  * @property {number} [port]
  * @property {string} [instructions]                extra system prompt text
+ * @property {{ maxCostPerSession?: number, maxTokensPerSession?: number, warnAtPercent?: number }} [budget]
+ * @property {Record<string, "allow"|"ask"|"deny">} [permissions]
+ * @property {Record<string, any>} [customAgents]
  */
 
 const HOME = os.homedir();
