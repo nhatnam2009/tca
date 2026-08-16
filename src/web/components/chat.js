@@ -271,11 +271,115 @@ export function bindEvents({ onSend, onAbort, onToggleMode, onOpenSettings, onUn
   if (jumpBtn) jumpBtn.addEventListener("click", () => scrollToBottom(true));
 
   const ta = $("composer-input");
+  let slashCommands = [];
+  let selectedSlashIdx = -1;
+
+  async function loadSlashCommands() {
+    try {
+      const res = await api.get("/api/slash-commands");
+      if (res && res.commands) slashCommands = res.commands;
+    } catch {
+      // ignore
+    }
+  }
+  loadSlashCommands();
+
+  const hintsEl = $("slash-hints");
+  function hideSlashHints() {
+    if (hintsEl) {
+      hintsEl.hidden = true;
+      hintsEl.textContent = "";
+    }
+    selectedSlashIdx = -1;
+  }
+
+  function renderSlashHints(matches) {
+    if (!hintsEl) return;
+    if (!matches.length) {
+      hideSlashHints();
+      return;
+    }
+    hintsEl.textContent = "";
+    matches.forEach((c, idx) => {
+      const item = el("div", `slash-item ${idx === selectedSlashIdx ? "selected" : ""}`);
+      item.setAttribute("role", "option");
+      item.setAttribute("data-cmd", c.name);
+
+      const name = el("span", "slash-item-name", `/${c.name}`);
+      const desc = el("span", "slash-item-desc", c.description || "");
+      const badge = el("span", "slash-item-badge", c.kind || "builtin");
+
+      item.appendChild(name);
+      item.appendChild(desc);
+      item.appendChild(badge);
+
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        applySlash(c.name);
+      });
+      hintsEl.appendChild(item);
+    });
+    hintsEl.hidden = false;
+  }
+
+  function applySlash(cmdName) {
+    if (!ta) return;
+    ta.value = `/${cmdName} `;
+    hideSlashHints();
+    ta.focus();
+    autogrow();
+  }
+
   if (ta) {
-    ta.addEventListener("input", autogrow);
+    ta.addEventListener("input", () => {
+      autogrow();
+      const val = ta.value;
+      if (val.startsWith("/")) {
+        const match = val.match(/^\/([a-zA-Z0-9_-]*)$/);
+        if (match) {
+          const prefix = match[1].toLowerCase();
+          const matches = slashCommands.filter((c) => c.name.toLowerCase().startsWith(prefix));
+          selectedSlashIdx = 0;
+          renderSlashHints(matches);
+          return;
+        }
+      }
+      hideSlashHints();
+    });
+
     ta.addEventListener("keydown", (e) => {
+      if (hintsEl && !hintsEl.hidden) {
+        const items = hintsEl.querySelectorAll(".slash-item");
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          selectedSlashIdx = (selectedSlashIdx + 1) % items.length;
+          items.forEach((it, idx) => it.classList.toggle("selected", idx === selectedSlashIdx));
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          selectedSlashIdx = (selectedSlashIdx - 1 + items.length) % items.length;
+          items.forEach((it, idx) => it.classList.toggle("selected", idx === selectedSlashIdx));
+          return;
+        }
+        if (e.key === "Enter" || e.key === "Tab") {
+          if (items.length && selectedSlashIdx >= 0 && selectedSlashIdx < items.length) {
+            e.preventDefault();
+            const cmd = items[selectedSlashIdx].getAttribute("data-cmd");
+            if (cmd) applySlash(cmd);
+            return;
+          }
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          hideSlashHints();
+          return;
+        }
+      }
+
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
+        hideSlashHints();
         if (onSend) onSend();
       }
     });
@@ -284,6 +388,7 @@ export function bindEvents({ onSend, onAbort, onToggleMode, onOpenSettings, onUn
   if (composer && onSend) {
     composer.addEventListener("submit", (e) => {
       e.preventDefault();
+      hideSlashHints();
       onSend();
     });
   }

@@ -22,6 +22,8 @@ import { appendMessage, appendCheckpoint, agentHistory, maybeSetTitle, readTodos
 import { modelsFor } from "./catalog.js";
 import { clearNotification, notify, vibrate } from "./notify.js";
 import { planCompaction, summarize, repairHistory, estimateTokens, pairingErrors } from "./compact.js";
+import { resolveSlashPrompt } from "./slash.js";
+import { undoLastTurn, redoLastTurn } from "./undo.js";
 
 const APPROVAL_TIMEOUT = 10 * 60_000;
 const FALLBACK_CONTEXT_WINDOW = 128_000; // used only when the catalog has no entry for this model
@@ -366,13 +368,17 @@ export class Agent {
    * are exactly the parts worth having a test for.
    */
   buildSystemPrompt() {
-    return buildSystemPrompt({
+    const base = buildSystemPrompt({
       config: this.config,
       workspace: this.config.workspace,
       todos: this.sessionId ? readTodos(this.sessionId) : [],
       mode: this.mode,
       kind: this.kind,
     });
+    if (this.extraInstructions) {
+      return `${base}\n\n${this.extraInstructions}`;
+    }
+    return base;
   }
 
   /** @param {string} id @param {boolean} approved */
@@ -535,6 +541,43 @@ export class Agent {
     if (this.running) throw new Error("this session already has a turn in flight");
     this.running = true;
 
+    const slash = resolveSlashPrompt(text, this.config);
+    if (slash.handledLocally) {
+      if (slash.localAction === "help") {
+        await this.history.append({ role: "user", content: text });
+        await this.history.append({ role: "assistant", content: slash.localResult });
+        this.emit({ type: "text_delta", text: slash.localResult });
+        this.emit({ type: "done", stopReason: "done" });
+        return slash.localResult;
+      }
+      if (slash.localAction === "undo") {
+        const res = await undoLastTurn(this.sessionId, this.config.workspace);
+        const msg = res.ok
+          ? `Undone turn ${res.turn}: restored ${res.restored.length} file(s).`
+          : `Undo failed: ${res.error || "No turns to undo"}`;
+        await this.history.append({ role: "user", content: text });
+        await this.history.append({ role: "assistant", content: msg });
+        this.emit({ type: "text_delta", text: msg });
+        this.emit({ type: "done", stopReason: "done" });
+        return msg;
+      }
+      if (slash.localAction === "redo") {
+        const res = await redoLastTurn(this.sessionId, this.config.workspace);
+        const msg = res.ok
+          ? `Redone turn ${res.turn}: reapplied ${res.restored.length} file(s).`
+          : `Redo failed: ${res.error || "No turns to redo"}`;
+        await this.history.append({ role: "user", content: text });
+        await this.history.append({ role: "assistant", content: msg });
+        this.emit({ type: "text_delta", text: msg });
+        this.emit({ type: "done", stopReason: "done" });
+        return msg;
+      }
+    }
+
+    if (slash.mode) this.mode = slash.mode;
+    if (slash.extraInstructions) this.extraInstructions = slash.extraInstructions;
+    const resolvedText = slash.prompt || text;
+
     const provider = this.config.providers[this.config.active];
     if (!provider) throw new Error("No provider configured. Open Settings and add one.");
     if (!provider.apiKey && !/^https?:\/\/(127\.0\.0\.1|localhost|10\.|192\.168\.)/.test(provider.baseUrl)) {
@@ -565,9 +608,9 @@ export class Agent {
       ...(this.kind === "root" ? { spawnAgent: this.spawnAgent } : {}),
     };
 
-    await this.history.append({ role: "user", content: text });
+    await this.history.append({ role: "user", content: resolvedText });
     if (this.kind === "root") {
-      const title = await maybeSetTitle(this.sessionId, text);
+      const title = await maybeSetTitle(this.sessionId, resolvedText);
       this.emit({ type: "title", title });
     }
 
@@ -576,7 +619,7 @@ export class Agent {
     if (this.kind === "root") {
       // One ongoing notification for the whole turn, replaced at the end by the
       // result. Without it there is nothing on a phone to say the agent is busy.
-      notify({ title: "Agent working\u2026", body: text.slice(0, 120), priority: "low", ongoing: true }).catch(() => {});
+      notify({ title: "Agent working\u2026", body: resolvedText.slice(0, 120), priority: "low", ongoing: true }).catch(() => {});
     }
 
     /** @type {{kind: "done"|"aborted"|"error"|"stuck", detail: string}} */

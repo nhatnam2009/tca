@@ -532,6 +532,7 @@ src/capabilities.js  what the agent could do here, scored and tiered
 src/status.js        the `doctor` view of capabilities.js
 src/store.js         sessions as JSONL, parse cache, compaction checkpoints
 src/undo.js          turn-by-turn file undo/redo engine with SHA-256 hash verification
+src/slash.js         slash-command parser and custom agent router (/help, /review, /test, etc.)
 src/loop.js          the agent loop, sub-agents, cost accounting
 src/daemon.js        HTTP + SSE + auth + static files
 src/cli.js           serve / run / undo / redo / token / models / doctor / power / adb-setup
@@ -555,6 +556,7 @@ test/discover.test.mjs     endpoint model discovery, format normalization, cache
 test/markdown.test.mjs     the UI renderer, highlighter and components, in a DOM stub
 test/permissions.test.mjs  granular tool permissions, categories, and backward compatibility
 test/search.test.mjs       ripgrep parity for grep and glob, the plan tool, AGENTS.md
+test/slash.test.mjs        slash commands, custom agents routing, and local actions
 test/undo.test.mjs         turn-by-turn undo/redo, conflict detection, multi-turn rollback
 test/verify.test.mjs       diagnostics, and the tool set each mode and agent gets
 test/websearch.test.mjs    the search parser against a saved page, boot script
@@ -564,7 +566,7 @@ test/wire.test.mjs         what actually goes on the socket, for both formats
 ## Development
 
 ```sh
-node --test test/*.test.mjs     # 178 tests, no network or API key needed
+node --test test/*.test.mjs     # 182 tests, no network or API key needed
 npx tsc --noEmit                # JSDoc types, on a dev machine only
 node tools/gen-seed.mjs         # refresh the offline catalog from models.dev
 ```

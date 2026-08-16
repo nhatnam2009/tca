@@ -114,6 +114,7 @@ export function defaultConfig() {
       subagent: "allow",
       git: "allow",
     },
+    customAgents: {},
     providers: {},
   };
 }
@@ -146,6 +147,7 @@ export function loadConfig() {
   }
   const merged = { ...defaultConfig(), ...raw };
   merged.budget = { ...defaultConfig().budget, ...(raw.budget || {}) };
+  merged.customAgents = { ...(raw.customAgents || {}) };
 
   const defaultPerms = defaultConfig().permissions;
   const rawPerms = raw.permissions || {};

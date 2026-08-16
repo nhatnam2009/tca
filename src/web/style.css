@@ -1309,6 +1309,65 @@ pre.diff code {
   background: var(--panel);
 }
 
+.slash-hints {
+  position: absolute;
+  bottom: 100%;
+  left: var(--pad);
+  right: var(--pad);
+  max-height: 220px;
+  overflow-y: auto;
+  margin-bottom: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+}
+
+.slash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  min-height: 38px;
+  cursor: pointer;
+  font-size: 13.5px;
+  border-bottom: 1px solid var(--line);
+}
+
+.slash-item:last-child {
+  border-bottom: none;
+}
+
+.slash-item:hover,
+.slash-item.selected {
+  background: var(--raised);
+}
+
+.slash-item-name {
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.slash-item-desc {
+  color: var(--fg-dim);
+  font-size: 12.5px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slash-item-badge {
+  font-size: 10.5px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--bg-sunken);
+  color: var(--fg-faint);
+  text-transform: uppercase;
+}
+
 .meter {
   display: flex;
   align-items: center;

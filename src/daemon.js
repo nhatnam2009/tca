@@ -22,6 +22,7 @@ import { Runner } from "./loop.js";
 import { DICT, LANGS, DEFAULT_LANG } from "./i18n.js";
 import { discoverOrCache } from "./discover.js";
 import { undoLastTurn, redoLastTurn, getUndoHistory } from "./undo.js";
+import { listSlashCommands } from "./slash.js";
 
 const WEB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "web");
 const VERSION = "0.1.0";
@@ -219,6 +220,10 @@ export async function serve(opts = {}) {
     }
     if (method === "GET" && pathname === "/api/catalog/search") {
       return json(res, 200, { hits: searchModels(url.searchParams.get("q") || "") });
+    }
+    if (method === "GET" && pathname === "/api/slash-commands") {
+      const { config } = loadConfig();
+      return json(res, 200, { commands: listSlashCommands(config) });
     }
     if (method === "POST" && pathname === "/api/catalog/download") {
       const info = await downloadFullCatalog();
