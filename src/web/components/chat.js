@@ -8,7 +8,7 @@
  */
 
 import { $, el, t, fail } from "../helpers.js";
-import { renderRich, toolRow, finishToolRow } from "./toolcard.js";
+import { toolRow, finishToolRow } from "./toolcard.js";
 import { renderRich as renderMarkdownRich } from "../markdown.js";
 import { api } from "../api.js";
 import { setStatus } from "./statusbar.js";

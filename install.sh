@@ -272,6 +272,12 @@ if in_termux; then
   export DEBIAN_FRONTEND=noninteractive
   KEEP=(-o "Dpkg::Options::=--force-confold" -o "Dpkg::Options::=--force-confdef")
 
+  if [ ! -x "$PREFIX/bin/termux-setup-package-manager" ]; then
+    mkdir -p "$PREFIX/bin"
+    printf '#!/bin/sh\necho "apt"\n' > "$PREFIX/bin/termux-setup-package-manager"
+    chmod +x "$PREFIX/bin/termux-setup-package-manager" 2>/dev/null || true
+  fi
+
   # Trước khi làm gì khác. Đi tiếp trên một apt đã chết chỉ sinh ra một chuỗi lỗi
   # phái sinh vô nghĩa — "không có gói 'nodejs' trong repo này" khi gói vẫn còn
   # đó, chỉ là apt không đọc được danh sách nữa.
